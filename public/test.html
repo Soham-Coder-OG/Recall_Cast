@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RecallCast: Laptop Simulator</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; background: #f8fafc; color: #334155; }
+        .card { background: white; max-width: 500px; margin: 0 auto; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        video { width: 100%; border-radius: 8px; background: #000; margin-bottom: 15px; }
+        button { background: #2563eb; color: white; font-weight: bold; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 16px; width: 100%; transition: background 0.2s; }
+        button:hover { background: #1d4ed8; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        #status { margin-top: 20px; font-weight: bold; min-height: 24px; }
+        .batch-counter { background: #e0f2fe; color: #0369a1; padding: 8px; border-radius: 6px; margin-top: 15px; font-size: 14px; font-weight: bold;}
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>💻 Laptop Webcam Simulator</h2>
+        <p>Capturing visual context based on time.</p>
+        
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="canvas" style="display:none;"></canvas>
+        
+        <button id="captureBtn" onclick="captureAndSend()">📸 Capture & Send Frame</button>
+        
+        <div class="batch-counter" id="counter">Images sent this batch: 0 / 3</div>
+        <p id="status">Waiting to start...</p>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const statusText = document.getElementById('status');
+        const counterText = document.getElementById('counter');
+        const btn = document.getElementById('captureBtn');
+        
+        let imagesSent = 0;
+
+        // 1. Boot up the laptop webcam
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+                statusText.innerText = "Webcam active. Ready to capture.";
+            })
+            .catch(err => {
+                statusText.innerText = "❌ Webcam access denied or not found.";
+                statusText.style.color = "red";
+                console.error("Webcam error:", err);
+            });
+
+        // 2. Capture & Upload (No GPS needed!)
+        function captureAndSend() {
+            btn.disabled = true;
+            statusText.innerText = "⏳ Uploading frame...";
+            statusText.style.color = "#334155";
+
+            // Draw current video frame to canvas
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+
+            // Convert canvas to a JPEG blob and send EXACTLY what the server expects
+            canvas.toBlob(async (blob) => {
+                try {
+                    // Send the raw blob directly with the correct Content-Type header!
+                    const response = await fetch('http://localhost:3000/upload', { 
+                        method: 'POST', 
+                        headers: { 'Content-Type': 'image/jpeg' },
+                        body: blob 
+                    });
+                    
+                    if (response.ok) {
+                        imagesSent++;
+                        counterText.innerText = `Images sent this batch: ${imagesSent % 3 === 0 ? 3 : imagesSent % 3} / 3`;
+                        
+                        if (imagesSent % 3 === 0) {
+                            statusText.innerText = "✅ Batch full! AI is processing...";
+                            statusText.style.color = "green";
+                        } else {
+                            statusText.innerText = "✅ Frame queued!";
+                            statusText.style.color = "blue";
+                        }
+                    } else {
+                        throw new Error("Server rejected upload");
+                    }
+                } catch (error) {
+                    statusText.innerText = "❌ Network Error.";
+                    statusText.style.color = "red";
+                } finally {
+                    setTimeout(() => { btn.disabled = false; }, 1000); 
+                }
+            }, 'image/jpeg', 0.8);
+        }
+    </script>
+</body>
+</html>

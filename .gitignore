@@ -1,0 +1,12 @@
+# 1. Hide Secrets & Passwords
+.env
+
+# 2. Ignore the massive helper packages (everyone downloads their own)
+node_modules/
+
+# 3. Ignore all test photos and temporary memory files!
+uploads/
+
+# 4. Ignore Windows hidden system files
+.DS_Store
+Thumbs.db
