@@ -6,31 +6,43 @@ mongoose.connect(process.env.MONGO_URI)
   .catch(err => console.log(err));
 
 // -------------------------------------------------------
-// 1. THE MEMORY BLUEPRINT (Now with GPS!)
+// 1. THE MEMORY BLUEPRINT (V2.0 - Rich Extraction)
 // -------------------------------------------------------
 const memorySchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
   text_found: String,
   objects: [String],
   summary: String,
-  latitude: Number,   // 📍 NEW: Stores GPS Latitude
-  longitude: Number,  // 📍 NEW: Stores GPS Longitude
-  imagePath: String 
+  
+  // 🚀 V2.0 NEW FIELDS: Rich Data Extraction
+  environment: String,         // e.g., "Indoor Office", "Bedroom"
+  action: String,              // e.g., "Typing", "Walking"
+  people_count: String,        // e.g., "2 people", "None"
+  unique_identifiers: String,  // e.g., "iPhone with blue case"
+  
+  latitude: Number,   
+  longitude: Number,  
+  capturedAt: String,
+
+  // 🚀 V2.0 SCALABILITY: Semantic Compression Flag
+  isCompressed: { type: Boolean, default: false } 
 });
 
 const Memory = mongoose.model('Memory', memorySchema);
 
 // -------------------------------------------------------
-// 2. THE WATCHLIST BLUEPRINT (For Phase 2 Alerts)
+// 2. THE WATCHLIST BLUEPRINT (V2.0 - Unique Anchors)
 // -------------------------------------------------------
 const watchlistSchema = new mongoose.Schema({
   addedAt: { type: Date, default: Date.now },
-  itemName: String,       // e.g., "Black Leather Wallet"
-  description: String,    // Detailed AI description to help it look for it later
-  isTracking: { type: Boolean, default: true } // Toggle tracking on/off
+  itemName: String,       
+  description: String,    
+  unique_anchors: String, // 🚀 V2.0 NEW: Prevents the "Two iPhones" confusion
+  latitude: Number,
+  longitude: Number,
+  isTracking: { type: Boolean, default: true } 
 });
 
 const WatchlistItem = mongoose.model('WatchlistItem', watchlistSchema);
 
-// Export both blueprints so server.js can use them!
 module.exports = { Memory, WatchlistItem };
