@@ -5,8 +5,8 @@
 // #include "soc/rtc_cntl_reg.h"  // Brownout prevention
 
 // // WiFi credentials
-// const char* ssid = "Barnona Das";
-// const char* password = "Baren718";
+// const char* ssid = "ENTER THE WIFI NAME HERE"; //MAKE SURE TO KEEP THE INVERTED COMMAS ""
+// const char* password = "ENTER THE WIFI PASSWORD HERE"; //MAKE SURE TO KEEP THE INVERTED COMMAS ""
 
 // // Server endpoint (Make sure this matches your computer's IP on the hotspot!)
 // const char* serverUrl = "http://10.77.228.161:3000/upload";
