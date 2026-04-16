@@ -27,13 +27,13 @@ const appUpload = multer({ dest: 'uploads/' });
 // ==========================================
 // STATE VARIABLES
 // ==========================================
-let imageBatchQueue = [];
+let imageBatchQueue =[];
 const BATCH_SIZE = 3;
 
 let lastKnownLat = null;
 let lastKnownLng = null;
-let lastKnownTime = null; // ✅ Store Indian timestamp from Android
-let activeAlerts = [];
+let lastKnownTime = null; 
+let activeAlerts =[];
 
 // ==========================================
 // ROUTE 1: Receive RAW Binary Image & Queue It
@@ -45,7 +45,6 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
     return res.status(400).send('No image data received.');
   }
 
-  // 📍 Catch GPS from URL queries AND HTTP Headers
   const latInput = req.query.lat || req.headers['lat'] || req.headers['x-lat'];
   const lngInput = req.query.lng || req.headers['lng'] || req.headers['x-lng'];
 
@@ -65,7 +64,6 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
 
   imageBatchQueue.push(filepath);
 
-  // ✅ Indian time for logging
   const captureTime = new Date().toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -78,8 +76,8 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
   if (imageBatchQueue.length >= BATCH_SIZE) {
     console.log(`🚀 Batch full! Sending ${BATCH_SIZE} frames to AI...`);
 
-    const batchToProcess = [...imageBatchQueue];
-    imageBatchQueue = [];
+    const batchToProcess =[...imageBatchQueue];
+    imageBatchQueue =[];
 
     try {
       const watchlistItems = await WatchlistItem.find({ isTracking: true });
@@ -97,42 +95,38 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
 
         const newMemory = new Memory({
           text_found: formattedText,
-          objects: analysis.objects || [],
+          objects: analysis.objects ||[],
           summary: analysis.summary || "No clear summary available.",
           latitude: lastKnownLat,
           longitude: lastKnownLng,
-          // ✅ Store Indian timestamp in memory too
           capturedAt: lastKnownTime || new Date().toLocaleString('en-IN', {
             timeZone: 'Asia/Kolkata'
           })
         });
 
         await newMemory.save();
-        console.log(`✅ Memory saved [GPS: ${lastKnownLat || "Unknown"}, ${lastKnownLng || "Unknown"}] [Time: ${lastKnownTime || "Unknown"}]: "${analysis.summary}"`);
+        console.log(`✅ Memory saved [GPS: ${lastKnownLat || "Unknown"}, ${lastKnownLng || "Unknown"}][Time: ${lastKnownTime || "Unknown"}]: "${analysis.summary}"`);
 
-        // 🚨 Check for proactive alerts
         if (analysis.alert && analysis.alert !== "null"
             && analysis.alert.toLowerCase() !== "null") {
           console.log(`\n🚨 DANGER DETECTED: ${analysis.alert}`);
           activeAlerts.push(analysis.alert);
         }
 
-        // Smart deletion on success
         console.log(`🗑️ Cleaning up ${batchToProcess.length} processed images...`);
         for (const imagePath of batchToProcess) {
           try {
             if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
-          } catch (e) { /* silent */ }
+          } catch (e) { }
         }
       }
     } catch (error) {
       console.error("Batch processing error:", error);
-      // Smart deletion on failure
       console.log(`🗑️ AI failed — cleaning up images anyway...`);
       for (const imagePath of batchToProcess) {
         try {
           if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
-        } catch (e) { /* silent */ }
+        } catch (e) { }
       }
     }
   }
@@ -147,7 +141,6 @@ app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
 
     console.log("\n🛡️ Received Watchlist photo from Android app!");
 
-    // ✅ Also store GPS + Indian timestamp from watchlist upload
     const lat = parseFloat(req.body.latitude) || lastKnownLat;
     const lng = parseFloat(req.body.longitude) || lastKnownLng;
     const timestamp = req.body.timestamp || new Date().toLocaleString('en-IN', {
@@ -159,7 +152,7 @@ app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
       lastKnownLng = lng;
     }
 
-    console.log(`📍 Watchlist item location: [${lat}, ${lng}] at ${timestamp}`);
+    console.log(`📍 Watchlist item location:[${lat}, ${lng}] at ${timestamp}`);
 
     const analysis = await analyzeValuable(req.file.path);
 
@@ -188,7 +181,7 @@ app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
 });
 
 // ==========================================
-// ROUTE 3: Handle Chat Queries
+// ROUTE 3: Handle Chat Queries (NO MORE HARDCODED BUGS!)
 // ==========================================
 app.post('/api/ask', async (req, res) => {
   const { question } = req.body;
@@ -196,21 +189,13 @@ app.post('/api/ask', async (req, res) => {
 
   console.log(`\n💬 User asks: "${question}"`);
 
-  // 🥚 Easter Egg
-  const lowerQ = question.toLowerCase();
-  if (lowerQ.includes("who created") || lowerQ.includes("who made")
-      || lowerQ.includes("developer")) {
-    console.log(`🤖 Easter Egg Triggered!`);
-    return res.status(200).json({
-      answer: "Recall Cast app was developed by team Omnisight."
-    });
-  }
+  // 🚀 The dumb hardcoded Easter Egg is DELETED. 
+  // The AI in aiService.js will now handle intent matching intelligently.
 
   try {
     const recentMemories = await Memory.find().sort({ timestamp: -1 }).limit(100);
     const watchlistItems = await WatchlistItem.find({ isTracking: true });
 
-    // ✅ Indian Standard Time format for AI context
     const cleanContext = recentMemories.map(m => ({
       time: new Date(m.timestamp).toLocaleString('en-IN', {
         timeZone: 'Asia/Kolkata',
@@ -250,10 +235,9 @@ app.post('/api/ask', async (req, res) => {
 // ==========================================
 app.get('/api/alerts', (req, res) => {
 
-  // ✅ THE HEARTBEAT BEACON — Android sends GPS + Indian time every 10s
   const latInput = req.query.lat;
   const lngInput = req.query.lng;
-  const timeInput = req.query.time; // ✅ Indian timestamp from Android
+  const timeInput = req.query.time;
 
   if (latInput && lngInput && latInput !== "null"
       && lngInput !== "null" && latInput !== "0.0") {
@@ -265,21 +249,17 @@ app.get('/api/alerts', (req, res) => {
     }
   }
 
-  // ✅ Store Indian timestamp from Android heartbeat
   if (timeInput) {
     lastKnownTime = decodeURIComponent(timeInput);
-    // Uncomment to see heartbeat in terminal:
-    // console.log(`📍 Heartbeat: [${lastKnownLat}, ${lastKnownLng}] at ${lastKnownTime}`);
   }
 
   if (activeAlerts.length > 0) {
     const alertsToSend = [...activeAlerts];
-    activeAlerts = []; // ✅ Clear mailbox after sending
+    activeAlerts =[]; 
     return res.status(200).json({ hasAlerts: true, alerts: alertsToSend });
   }
 
-  // No alerts
-  res.status(200).json({ hasAlerts: false, alerts: [] });
+  res.status(200).json({ hasAlerts: false, alerts:[] });
 });
 
 // ==========================================

@@ -3,70 +3,181 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RecallCast: Laptop Simulator</title>
+    <title>RecallCast - Web Dashboard</title>
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 20px; background: #f8fafc; color: #334155; }
-        .card { background: white; max-width: 500px; margin: 0 auto; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        video { width: 100%; border-radius: 8px; background: #000; margin-bottom: 15px; }
-        button { background: #2563eb; color: white; font-weight: bold; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 16px; width: 100%; transition: background 0.2s; }
-        button:hover { background: #1d4ed8; }
-        button:disabled { background: #94a3b8; cursor: not-allowed; }
-        #status { margin-top: 20px; font-weight: bold; min-height: 24px; }
-        .batch-counter { background: #e0f2fe; color: #0369a1; padding: 8px; border-radius: 6px; margin-top: 15px; font-size: 14px; font-weight: bold;}
+        /* Modern Dark Theme (Matching Android App) */
+        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: #ffffff; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* Layout: Split Screen */
+        .left-panel { width: 35%; padding: 20px; background: #1A1A1A; border-right: 1px solid #333; display: flex; flex-direction: column; overflow-y: auto; }
+        .right-panel { width: 65%; display: flex; flex-direction: column; background: #121212; }
+
+        /* Camera Section */
+        h2 { margin-top: 0; color: #007BFF; display: flex; align-items: center; gap: 10px; }
+        .camera-container { position: relative; width: 100%; border-radius: 12px; overflow: hidden; border: 2px solid #333; background: #000; margin-bottom: 15px; }
+        video { width: 100%; display: block; }
+        
+        /* Buttons */
+        button { background: #007BFF; color: white; font-weight: bold; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 15px; width: 100%; margin-bottom: 10px; transition: 0.2s; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #444; color: #888; cursor: not-allowed; }
+        .btn-watchlist { background: #148A3E; }
+        .btn-watchlist:hover { background: #0F6B30; }
+
+        /* Status & Stats */
+        .status-box { background: #1E1E1E; padding: 15px; border-radius: 8px; font-size: 14px; color: #ccc; margin-bottom: 15px; border: 1px solid #333; }
+        .highlight { color: #90EE90; font-weight: bold; }
+        .gps-text { color: #A8D4FF; font-family: monospace; }
+
+        /* Chat UI */
+        .chat-header { background: #007BFF; padding: 15px 20px; font-size: 18px; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 10; }
+        .chat-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        
+        /* Chat Bubbles */
+        .bubble { max-width: 75%; padding: 14px 18px; border-radius: 20px; font-size: 15px; line-height: 1.4; word-wrap: break-word; }
+        .bubble-user { align-self: flex-end; background: #007BFF; border-bottom-right-radius: 2px; }
+        .bubble-ai { align-self: flex-start; background: #148A3E; border-bottom-left-radius: 2px; border: 1px solid #0F6B30; }
+        .bubble-alert { align-self: center; background: #FF3B30; color: white; font-weight: bold; border-radius: 8px; width: 90%; text-align: center; }
+        
+        /* Links in Chat */
+        .bubble a { color: #90EE90; text-decoration: underline; font-weight: bold; }
+        .bubble-user a { color: #A8D4FF; }
+
+        /* Input Area */
+        .input-area { padding: 15px 20px; background: #1A1A1A; border-top: 1px solid #333; display: flex; gap: 10px; }
+        input[type="text"] { flex: 1; padding: 14px 20px; border-radius: 50px; border: 1px solid #444; background: #1E1E1E; color: white; font-size: 15px; outline: none; }
+        input[type="text"]:focus { border-color: #007BFF; }
+        .send-btn { width: 50px; height: 50px; border-radius: 50px; background: #007BFF; display: flex; align-items: center; justify-content: center; font-size: 20px; margin: 0; padding: 0; }
     </style>
 </head>
 <body>
 
-    <div class="card">
-        <h2>💻 Laptop Webcam Simulator</h2>
-        <p>Capturing visual context based on time.</p>
+    <!-- LEFT PANEL: Camera & Controls -->
+    <div class="left-panel">
+        <h2>👓 RecallCast Dashboard</h2>
         
-        <video id="webcam" autoplay playsinline></video>
-        <canvas id="canvas" style="display:none;"></canvas>
+        <div class="camera-container">
+            <video id="webcam" autoplay playsinline></video>
+            <canvas id="canvas" style="display:none;"></canvas>
+        </div>
         
-        <button id="captureBtn" onclick="captureAndSend()">📸 Capture & Send Frame</button>
+        <button id="captureBtn" onclick="captureAndSend()">📸 Capture Frame (Batch)</button>
         
-        <div class="batch-counter" id="counter">Images sent this batch: 0 / 3</div>
-        <p id="status">Waiting to start...</p>
+        <!-- Hidden file input for watchlist -->
+        <input type="file" id="watchlistInput" style="display: none" accept="image/*" onchange="uploadWatchlist(event)">
+        <button class="btn-watchlist" onclick="document.getElementById('watchlistInput').click()">🛡️ Upload to Watchlist</button>
+        
+        <div class="status-box">
+            <div>📡 <b>Server:</b> <span id="serverStatus" style="color: yellow;">Checking...</span></div>
+            <div style="margin-top: 5px;">🖼️ <b>Queue:</b> <span class="highlight" id="counterText">0 / 3</span></div>
+            <div style="margin-top: 5px;">📍 <b>GPS:</b> <span class="gps-text" id="gpsText">Locating...</span></div>
+            <!-- The heartbeat text has been completely removed from the UI! -->
+        </div>
+    </div>
+
+    <!-- RIGHT PANEL: Chat Interface -->
+    <div class="right-panel">
+        <div class="chat-header">💬 Recall Cast AI Memory Assistant</div>
+        
+        <div class="chat-box" id="chatBox">
+            <div class="bubble bubble-ai">🤖 Hello! I am RecallCast. How can I help you?</div>
+        </div>
+
+        <div class="input-area">
+            <input type="text" id="chatInput" placeholder="Message AI (e.g., 'Where is my wallet?')" onkeypress="handleEnter(event)">
+            <button class="send-btn" id="sendBtn" onclick="askQuestion()">➤</button>
+        </div>
     </div>
 
     <script>
-        const video = document.getElementById('webcam');
-        const canvas = document.getElementById('canvas');
-        const statusText = document.getElementById('status');
-        const counterText = document.getElementById('counter');
-        const btn = document.getElementById('captureBtn');
+        // ⚠️ Change this if testing on a different device than the one running Node.js!
+        const SERVER_URL = "http://localhost:3000"; 
         
+        // State
+        let currentLat = 0.0;
+        let currentLng = 0.0;
         let imagesSent = 0;
 
-        // 1. Boot up the laptop webcam
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => {
-                video.srcObject = stream;
-                statusText.innerText = "Webcam active. Ready to capture.";
-            })
-            .catch(err => {
-                statusText.innerText = "❌ Webcam access denied or not found.";
-                statusText.style.color = "red";
-                console.error("Webcam error:", err);
-            });
+        // UI Elements
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const chatBox = document.getElementById('chatBox');
+        const chatInput = document.getElementById('chatInput');
+        const counterText = document.getElementById('counterText');
+        const gpsText = document.getElementById('gpsText');
+        const serverStatus = document.getElementById('serverStatus');
 
-        // 2. Capture & Upload (No GPS needed!)
+        // ==========================================
+        // 1. INITIALIZATION (Camera, GPS, Notifications)
+        // ==========================================
+        window.onload = () => {
+            // Start Webcam
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => { video.srcObject = stream; })
+                .catch(err => alert("Webcam error: " + err));
+
+            // Start GPS Tracking
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(pos => {
+                    currentLat = pos.coords.latitude.toFixed(5);
+                    currentLng = pos.coords.longitude.toFixed(5);
+                    gpsText.innerText = `[${currentLat}, ${currentLng}]`;
+                }, err => { gpsText.innerText = "Permission Denied"; }, { enableHighAccuracy: true });
+            }
+
+            // Request Notification Permission
+            if ("Notification" in window) {
+                Notification.requestPermission();
+            }
+
+            // HIDDEN HEARTBEAT (Runs secretly every 10 seconds)
+            setInterval(sendHiddenHeartbeat, 10000);
+            sendHiddenHeartbeat(); 
+        };
+
+        // ==========================================
+        // 2. THE HIDDEN HEARTBEAT BEACON
+        // ==========================================
+        async function sendHiddenHeartbeat() {
+            try {
+                const indianTime = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+                const url = `${SERVER_URL}/api/alerts?lat=${currentLat}&lng=${currentLng}&time=${encodeURIComponent(indianTime)}`;
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                // Keep the server status updated without showing the raw heartbeat text
+                serverStatus.innerText = "Online";
+                serverStatus.style.color = "#90EE90";
+
+                // Process Proactive Alerts
+                if (data.hasAlerts && data.alerts) {
+                    data.alerts.forEach(alertMsg => {
+                        fireAlert(alertMsg);
+                    });
+                }
+            } catch (e) {
+                serverStatus.innerText = "Offline";
+                serverStatus.style.color = "red";
+            }
+        }
+
+        // ==========================================
+        // 3. CAPTURE & UPLOAD FRAME
+        // ==========================================
         function captureAndSend() {
+            const btn = document.getElementById('captureBtn');
             btn.disabled = true;
-            statusText.innerText = "⏳ Uploading frame...";
-            statusText.style.color = "#334155";
+            btn.innerText = "⏳ Uploading...";
 
-            // Draw current video frame to canvas
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             canvas.getContext('2d').drawImage(video, 0, 0);
 
-            // Convert canvas to a JPEG blob and send EXACTLY what the server expects
             canvas.toBlob(async (blob) => {
                 try {
-                    // Send the raw blob directly with the correct Content-Type header!
-                    const response = await fetch('http://localhost:3000/upload', { 
+                    const url = `${SERVER_URL}/upload?lat=${currentLat}&lng=${currentLng}`;
+                    const response = await fetch(url, { 
                         method: 'POST', 
                         headers: { 'Content-Type': 'image/jpeg' },
                         body: blob 
@@ -74,25 +185,123 @@
                     
                     if (response.ok) {
                         imagesSent++;
-                        counterText.innerText = `Images sent this batch: ${imagesSent % 3 === 0 ? 3 : imagesSent % 3} / 3`;
+                        let remainder = imagesSent % 3;
+                        counterText.innerText = `${remainder === 0 ? 3 : remainder} / 3`;
+                        if (remainder === 0) setTimeout(() => counterText.innerText = "0 / 3", 2000);
                         
-                        if (imagesSent % 3 === 0) {
-                            statusText.innerText = "✅ Batch full! AI is processing...";
-                            statusText.style.color = "green";
-                        } else {
-                            statusText.innerText = "✅ Frame queued!";
-                            statusText.style.color = "blue";
-                        }
+                        serverStatus.innerText = "Online";
+                        serverStatus.style.color = "#90EE90";
                     } else {
-                        throw new Error("Server rejected upload");
+                        throw new Error("Server rejected request");
                     }
                 } catch (error) {
-                    statusText.innerText = "❌ Network Error.";
-                    statusText.style.color = "red";
+                    console.error("Upload failed", error);
+                    serverStatus.innerText = "Offline (Upload Failed)";
+                    serverStatus.style.color = "red";
                 } finally {
-                    setTimeout(() => { btn.disabled = false; }, 1000); 
+                    btn.innerText = "📸 Capture Frame (Batch)";
+                    btn.disabled = false;
                 }
             }, 'image/jpeg', 0.8);
+        }
+
+        // ==========================================
+        // 4. WATCHLIST UPLOAD
+        // ==========================================
+        async function uploadWatchlist(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            addBubble("⏳ Uploading to Watchlist...", "ai");
+            
+            const formData = new FormData();
+            formData.append('image', file);
+            formData.append('latitude', currentLat);
+            formData.append('longitude', currentLng);
+            formData.append('timestamp', new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
+
+            try {
+                const res = await fetch(`${SERVER_URL}/api/watchlist`, { method: 'POST', body: formData });
+                const data = await res.json();
+                
+                chatBox.removeChild(chatBox.lastChild); 
+                
+                if (data.success) {
+                    addBubble(`✅ Added to Watchlist: ${data.item}. I will alert you if you leave it behind!`, "ai");
+                } else {
+                    addBubble(`❌ Failed to identify Watchlist item.`, "ai");
+                }
+            } catch (e) {
+                chatBox.removeChild(chatBox.lastChild);
+                addBubble(`❌ Server error uploading watchlist. Check your SERVER_URL.`, "ai");
+            }
+            event.target.value = ''; 
+        }
+
+        // ==========================================
+        // 5. CHAT INTERFACE & LINKIFY
+        // ==========================================
+        function handleEnter(e) { if (e.key === 'Enter') askQuestion(); }
+
+        async function askQuestion() {
+            const question = chatInput.value.trim();
+            if (!question) return;
+
+            addBubble(question, "user");
+            chatInput.value = "";
+            document.getElementById('sendBtn').disabled = true;
+            
+            const typingBubble = addBubble("⏳ Searching your memories...", "ai");
+
+            try {
+                const response = await fetch(`${SERVER_URL}/api/ask`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question })
+                });
+                const data = await response.json();
+                
+                chatBox.removeChild(typingBubble);
+                addBubble("🤖 " + data.answer, "ai");
+            } catch (e) {
+                chatBox.removeChild(typingBubble);
+                addBubble("❌ Connection failed. Is the server running?", "ai");
+            } finally {
+                document.getElementById('sendBtn').disabled = false;
+            }
+        }
+
+        function addBubble(text, sender) {
+            const div = document.createElement('div');
+            div.className = `bubble bubble-${sender}`;
+            
+            let formattedText = text.replace(
+                /(https:\/\/www\.google\.com\/maps\?q=[-0-9.,]+)/g, 
+                '<a href="$1" target="_blank">📍 Open in Maps</a>'
+            );
+            
+            div.innerHTML = formattedText;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+            return div;
+        }
+
+        // ==========================================
+        // 6. FIRE ALERTS (Push Notification + UI Bubble)
+        // ==========================================
+        function fireAlert(message) {
+            const div = document.createElement('div');
+            div.className = `bubble bubble-alert`;
+            div.innerText = `🚨 ALERT: ${message}`;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            if (Notification.permission === "granted") {
+                new Notification("RecallCast Alert", {
+                    body: message,
+                    icon: "https://cdn-icons-png.flaticon.com/512/564/564619.png"
+                });
+            }
         }
     </script>
 </body>

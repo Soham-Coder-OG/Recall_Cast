@@ -9,7 +9,7 @@
 // const char* password = "ENTER THE WIFI PASSWORD HERE"; //MAKE SURE TO KEEP THE INVERTED COMMAS ""
 
 // // Server endpoint (Make sure this matches your computer's IP on the hotspot!)
-// const char* serverUrl = "http://10.77.228.161:3000/upload";
+// const char* serverUrl = "ENTER YOUR SERVER IP ADDRESS HERE:3000/upload"; //example:- "http://10.78.118.191:3000/upload";
 
 // // Camera config (AI Thinker ESP32-CAM)
 // void startCamera() {
