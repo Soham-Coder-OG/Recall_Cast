@@ -1,6 +1,6 @@
 after cloning of this repo do these steps given below :-
 
-inside the terminal type :- npm install
+inside the terminal type :- npm install , npm install bcrypt node-cron and npm install form-data
 
 create one uploads folder in the directory
 
@@ -15,4 +15,4 @@ to connect with the server and talk with ai here is the app to download or check
 
 https://github.com/Soham-Coder-OG/Recall_Cast/releases/tag/Recall_Cast_Android_App
 
-after downloading and opening the app , press and hold the recallcast top branding for 5 sec then enter the password (contact me for the password) then enter the the ip address of your laptop there and you are all set to go.
+after downloading and opening the app , press and hold the recallcast top branding for 5 sec then enter the password (contact me for the password) then enter the the ip address of your laptop there and you are all set to go.    

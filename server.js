@@ -3,47 +3,43 @@ const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
 const multer = require('multer');
+const bcrypt = require('bcrypt');
+const cron = require('node-cron');
+const crypto = require('crypto');
 
-const { analyzeScene, askAssistant, analyzeValuable } = require('./aiService');
-const { Memory, WatchlistItem } = require('./db');
+const { analyzeScene, askAssistant, analyzeValuable, compressMemories } = require('./aiService');
+const { Memory, WatchlistItem, User, ChatMessage } = require('./db');
 
 const app = express();
 const port = 3000;
 
-// ==========================================
-// MIDDLEWARE & SETUP
-// ==========================================
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
 const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
-}
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
 const appUpload = multer({ dest: 'uploads/' });
 
-// ==========================================
-// STATE VARIABLES
-// ==========================================
-let imageBatchQueue =[];
+let imageBatchQueue = [];
 const BATCH_SIZE = 3;
 
-let lastKnownLat = null;
-let lastKnownLng = null;
-let lastKnownTime = null; 
-let activeAlerts =[];
+// Per-user GPS Map: glassesToken -> { lat, lng, time }
+const userLocations = new Map();
+// Per-user alert mailbox: glassesToken -> [alerts]
+const activeAlerts = new Map();
 
 // ==========================================
 // ROUTE 1: Receive RAW Binary Image & Queue It
 // ==========================================
 app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (req, res) => {
-
   if (!req.body || req.body.length === 0) {
     console.log("Empty request received.");
     return res.status(400).send('No image data received.');
   }
+
+  const glassesToken = req.headers['x-glasses-token'] || req.headers['authorization'] || null;
 
   const latInput = req.query.lat || req.headers['lat'] || req.headers['x-lat'];
   const lngInput = req.query.lng || req.headers['lng'] || req.headers['x-lng'];
@@ -53,21 +49,23 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
     const parsedLat = parseFloat(latInput);
     const parsedLng = parseFloat(lngInput);
     if (!isNaN(parsedLat) && !isNaN(parsedLng) && parsedLat !== 0.0) {
-      lastKnownLat = parsedLat;
-      lastKnownLng = parsedLng;
+      if (glassesToken) {
+        const existing = userLocations.get(glassesToken) || {};
+        userLocations.set(glassesToken, {
+          lat: parsedLat, lng: parsedLng,
+          time: existing.time || new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+        });
+      }
     }
   }
 
   const filename = `snapshot-${Date.now()}.jpg`;
   const filepath = path.join(uploadDir, filename);
   fs.writeFileSync(filepath, req.body);
-
-  imageBatchQueue.push(filepath);
+  imageBatchQueue.push({ filepath, glassesToken });
 
   const captureTime = new Date().toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: true
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
   });
   console.log(`\n📸 Frame captured at ${captureTime} IST. Queue: ${imageBatchQueue.length}/${BATCH_SIZE}`);
 
@@ -75,58 +73,65 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
 
   if (imageBatchQueue.length >= BATCH_SIZE) {
     console.log(`🚀 Batch full! Sending ${BATCH_SIZE} frames to AI...`);
+    const batchToProcess = [...imageBatchQueue];
+    imageBatchQueue = [];
+    const batchToken = batchToProcess[0].glassesToken;
+    const filepaths = batchToProcess.map(b => b.filepath);
 
-    const batchToProcess =[...imageBatchQueue];
-    imageBatchQueue =[];
+    let userLat = null, userLng = null, userTime = null;
+    if (batchToken && userLocations.has(batchToken)) {
+      const loc = userLocations.get(batchToken);
+      userLat = loc.lat; userLng = loc.lng; userTime = loc.time;
+    }
 
     try {
-      const watchlistItems = await WatchlistItem.find({ isTracking: true });
+      const watchlistQuery = batchToken
+          ? { isTracking: true, glassesToken: batchToken }
+          : { isTracking: true };
+      const watchlistItems = await WatchlistItem.find(watchlistQuery);
       const cleanWatchlist = watchlistItems.map(w => ({
-        item: w.itemName,
-        description: w.description
+        item: w.itemName, description: w.description
       }));
-
-      const analysis = await analyzeScene(batchToProcess, cleanWatchlist);
+      const analysis = await analyzeScene(filepaths, cleanWatchlist);
 
       if (analysis) {
         const formattedText = Array.isArray(analysis.text_found)
-            ? analysis.text_found.join(' | ')
-            : (analysis.text_found || "None");
+            ? analysis.text_found.join(' | ') : (analysis.text_found || "None");
 
+        // ✅ V2.0 FIX: All rich fields restored — environment, action,
+        //    people_count, unique_identifiers were missing and are now saved
         const newMemory = new Memory({
-          text_found: formattedText,
-          objects: analysis.objects ||[],
-          summary: analysis.summary || "No clear summary available.",
-          latitude: lastKnownLat,
-          longitude: lastKnownLng,
-          capturedAt: lastKnownTime || new Date().toLocaleString('en-IN', {
-            timeZone: 'Asia/Kolkata'
-          })
+          text_found:          formattedText,
+          objects:             analysis.objects || [],
+          summary:             analysis.summary || "No clear summary available.",
+          environment:         analysis.environment || null,
+          action:              analysis.action || null,
+          people_count:        analysis.people_count || null,
+          unique_identifiers:  analysis.unique_identifiers || null,
+          latitude:            userLat,
+          longitude:           userLng,
+          capturedAt:          userTime || new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+          glassesToken:        batchToken
         });
 
         await newMemory.save();
-        console.log(`✅ Memory saved [GPS: ${lastKnownLat || "Unknown"}, ${lastKnownLng || "Unknown"}][Time: ${lastKnownTime || "Unknown"}]: "${analysis.summary}"`);
+        console.log(`✅ Memory saved [GPS: ${userLat || "Unknown"}, ${userLng || "Unknown"}] [Action: ${analysis.action || "Unknown"}]: "${analysis.summary}"`);
 
-        if (analysis.alert && analysis.alert !== "null"
-            && analysis.alert.toLowerCase() !== "null") {
+        if (analysis.alert && analysis.alert !== "null" && analysis.alert.toLowerCase() !== "null") {
           console.log(`\n🚨 DANGER DETECTED: ${analysis.alert}`);
-          activeAlerts.push(analysis.alert);
+          if (batchToken) {
+            if (!activeAlerts.has(batchToken)) activeAlerts.set(batchToken, []);
+            activeAlerts.get(batchToken).push(analysis.alert);
+          }
         }
-
-        console.log(`🗑️ Cleaning up ${batchToProcess.length} processed images...`);
-        for (const imagePath of batchToProcess) {
-          try {
-            if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
-          } catch (e) { }
+        for (const imagePath of filepaths) {
+          try { if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath); } catch (e) {}
         }
       }
     } catch (error) {
       console.error("Batch processing error:", error);
-      console.log(`🗑️ AI failed — cleaning up images anyway...`);
-      for (const imagePath of batchToProcess) {
-        try {
-          if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
-        } catch (e) { }
+      for (const imagePath of filepaths) {
+        try { if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath); } catch (e) {}
       }
     }
   }
@@ -138,35 +143,41 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
 app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No image provided" });
-
     console.log("\n🛡️ Received Watchlist photo from Android app!");
 
-    const lat = parseFloat(req.body.latitude) || lastKnownLat;
-    const lng = parseFloat(req.body.longitude) || lastKnownLng;
-    const timestamp = req.body.timestamp || new Date().toLocaleString('en-IN', {
-      timeZone: 'Asia/Kolkata'
-    });
+    const glassesToken = req.body.glassesToken || req.headers['authorization'] || null;
+    let lat = parseFloat(req.body.latitude);
+    let lng = parseFloat(req.body.longitude);
 
-    if (lat && lng && lat !== 0.0) {
-      lastKnownLat = lat;
-      lastKnownLng = lng;
+    if ((!lat || lat === 0.0) && glassesToken && userLocations.has(glassesToken)) {
+      const loc = userLocations.get(glassesToken);
+      lat = loc.lat; lng = loc.lng;
     }
 
-    console.log(`📍 Watchlist item location:[${lat}, ${lng}] at ${timestamp}`);
+    const timestamp = req.body.timestamp || new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
+    if (glassesToken && lat && lat !== 0.0) {
+      const existing = userLocations.get(glassesToken) || {};
+      userLocations.set(glassesToken, { lat, lng, time: existing.time || timestamp });
+    }
+
+    console.log(`📍 Watchlist item location: [${lat}, ${lng}] at ${timestamp}`);
     const analysis = await analyzeValuable(req.file.path);
 
     if (analysis && analysis.itemName) {
+      // ✅ V2.0 FIX: unique_anchors restored — this is what prevents the
+      //    "two iPhones" confusion bug. Was missing from the save.
       const newItem = new WatchlistItem({
-        itemName: analysis.itemName,
-        description: analysis.description,
-        latitude: lat,
-        longitude: lng,
-        addedAt: timestamp
+        itemName:       analysis.itemName,
+        description:    analysis.description,
+        unique_anchors: analysis.unique_anchors || null,
+        latitude:       lat,
+        longitude:      lng,
+        addedAt:        timestamp,
+        glassesToken:   glassesToken
       });
       await newItem.save();
-      console.log(`✅ Added to Watchlist: ${analysis.itemName} at ${timestamp}`);
-
+      console.log(`✅ Added to Watchlist: ${analysis.itemName} [Anchors: ${analysis.unique_anchors || "None"}] at ${timestamp}`);
       fs.unlinkSync(req.file.path);
       res.status(200).json({ success: true, item: analysis.itemName });
     } else {
@@ -181,49 +192,60 @@ app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
 });
 
 // ==========================================
-// ROUTE 3: Handle Chat Queries (NO MORE HARDCODED BUGS!)
+// ROUTE 3: Handle Chat Queries
+// ✅ AUTO-SAVES both user question and AI answer to ChatHistory
 // ==========================================
 app.post('/api/ask', async (req, res) => {
-  const { question } = req.body;
+  const { question, sessionId, sessionTitle } = req.body;
   if (!question) return res.status(400).json({ error: "No question provided" });
 
+  const glassesToken = req.headers['authorization'] || req.body.token || null;
   console.log(`\n💬 User asks: "${question}"`);
 
-  // 🚀 The dumb hardcoded Easter Egg is DELETED. 
-  // The AI in aiService.js will now handle intent matching intelligently.
-
   try {
-    const recentMemories = await Memory.find().sort({ timestamp: -1 }).limit(100);
-    const watchlistItems = await WatchlistItem.find({ isTracking: true });
+    const memoryQuery = glassesToken ? { glassesToken } : {};
+    const recentMemories = await Memory.find(memoryQuery).sort({ timestamp: -1 }).limit(100);
+    const watchlistQuery = glassesToken ? { isTracking: true, glassesToken } : { isTracking: true };
+    const watchlistItems = await WatchlistItem.find(watchlistQuery);
 
     const cleanContext = recentMemories.map(m => ({
       time: new Date(m.timestamp).toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        weekday: 'short',
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
+        timeZone: 'Asia/Kolkata', weekday: 'short', year: 'numeric', month: 'short',
+        day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true
       }),
-      summary: m.summary,
-      objects: m.objects,
-      location: m.latitude
-          ? `GPS: ${m.latitude}, ${m.longitude}`
-          : "Location unknown"
+      summary:            m.summary,
+      objects:            m.objects,
+      environment:        m.environment,
+      action:             m.action,
+      unique_identifiers: m.unique_identifiers,
+      location: m.latitude ? `GPS: ${m.latitude}, ${m.longitude}` : "Location unknown"
     }));
 
+    // ✅ V2.0: Pass unique_anchors to AI so it can distinguish identical items
     const cleanWatchlist = watchlistItems.map(w => ({
-      item: w.itemName,
-      description: w.description
+      item:           w.itemName,
+      description:    w.description,
+      unique_anchors: w.unique_anchors
     }));
 
     const answer = await askAssistant(question, cleanContext, cleanWatchlist);
     console.log(`🤖 AI Answers: ${answer}`);
 
-    res.status(200).json({ answer });
+    // ✅ Auto-save both messages to cloud if we have a token and session ID
+    if (glassesToken && sessionId) {
+      const title = sessionTitle || (question.length > 25 ? question.substring(0, 25) + '...' : question);
+      try {
+        await ChatMessage.insertMany([
+          { sessionId, glassesToken, sessionTitle: title, isUser: true,  text: question },
+          { sessionId, glassesToken, sessionTitle: title, isUser: false, text: '🤖 ' + answer }
+        ]);
+        console.log(`💾 Chat saved to cloud [session: ${sessionId.substring(0, 8)}...]`);
+      } catch (saveErr) {
+        console.error("Chat save error (non-fatal):", saveErr.message);
+      }
+    }
 
+    res.status(200).json({ answer });
   } catch (error) {
     console.error("Query processing error:", error);
     res.status(500).json({ answer: "System error while searching memories." });
@@ -234,32 +256,344 @@ app.post('/api/ask', async (req, res) => {
 // ROUTE 4: Alert Mailbox + Heartbeat Beacon
 // ==========================================
 app.get('/api/alerts', (req, res) => {
-
-  const latInput = req.query.lat;
-  const lngInput = req.query.lng;
+  const glassesToken = req.query.token || req.headers['authorization'] || null;
+  const latInput  = req.query.lat;
+  const lngInput  = req.query.lng;
   const timeInput = req.query.time;
 
-  if (latInput && lngInput && latInput !== "null"
-      && lngInput !== "null" && latInput !== "0.0") {
+  if (glassesToken && latInput && lngInput && latInput !== "null" && lngInput !== "null" && latInput !== "0.0") {
     const parsedLat = parseFloat(latInput);
     const parsedLng = parseFloat(lngInput);
     if (!isNaN(parsedLat) && !isNaN(parsedLng)) {
-      lastKnownLat = parsedLat;
-      lastKnownLng = parsedLng;
+      userLocations.set(glassesToken, {
+        lat: parsedLat, lng: parsedLng,
+        time: timeInput ? decodeURIComponent(timeInput)
+            : new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+      });
     }
   }
 
-  if (timeInput) {
-    lastKnownTime = decodeURIComponent(timeInput);
+  if (glassesToken && activeAlerts.has(glassesToken)) {
+    const userAlerts = activeAlerts.get(glassesToken);
+    if (userAlerts.length > 0) {
+      activeAlerts.delete(glassesToken);
+      return res.status(200).json({ hasAlerts: true, alerts: userAlerts });
+    }
   }
 
-  if (activeAlerts.length > 0) {
-    const alertsToSend = [...activeAlerts];
-    activeAlerts =[]; 
-    return res.status(200).json({ hasAlerts: true, alerts: alertsToSend });
+  res.status(200).json({ hasAlerts: false, alerts: [] });
+});
+
+// ==========================================
+// ROUTE 5: Register
+// ==========================================
+app.post('/api/register', async (req, res) => {
+  const { username, email, password } = req.body;
+
+  if (!username || !email || !password)
+    return res.status(400).json({ error: "Username, email and password are required." });
+  if (username.trim().length < 3)
+    return res.status(400).json({ error: "Username must be at least 3 characters." });
+  if (!email.includes('@'))
+    return res.status(400).json({ error: "Invalid email address." });
+  if (password.length < 6)
+    return res.status(400).json({ error: "Password must be at least 6 characters." });
+
+  try {
+    const existing = await User.findOne({
+      $or: [{ username: username.trim() }, { email: email.trim().toLowerCase() }]
+    });
+    if (existing) {
+      if (existing.username === username.trim())
+        return res.status(409).json({ error: "Username already taken." });
+      return res.status(409).json({ error: "Email already registered." });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const glassesToken = crypto.randomBytes(16).toString('hex');
+    const newUser = new User({
+      username: username.trim(), email: email.trim().toLowerCase(),
+      password: hashedPassword, glassesToken
+    });
+    await newUser.save();
+    console.log(`✅ New user registered: ${username}`);
+    res.status(200).json({ token: glassesToken, username: newUser.username });
+  } catch (err) {
+    console.error("Register error:", err);
+    res.status(500).json({ error: "Server error during registration." });
+  }
+});
+
+// ==========================================
+// ROUTE 6: Login
+// ==========================================
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password)
+    return res.status(400).json({ error: "Username and password are required." });
+
+  try {
+    const user = await User.findOne({ username: username.trim() });
+    if (!user)
+      return res.status(404).json({ error: "No account found with that username. Please register first." });
+
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch)
+      return res.status(401).json({ error: "Incorrect password. Please try again." });
+
+    console.log(`✅ User logged in: ${username}`);
+    res.status(200).json({ token: user.glassesToken, username: user.username });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ error: "Server error during login." });
+  }
+});
+
+// ==========================================
+// ROUTE 7: Get Glasses Token (For App Sidebar Display)
+// ==========================================
+app.get('/api/token', async (req, res) => {
+  const authToken = req.headers['authorization'] || req.query.token;
+  if (!authToken) return res.status(400).json({ error: "No token provided." });
+
+  try {
+    const user = await User.findOne({ glassesToken: authToken });
+    if (!user) return res.status(404).json({ error: "User not found." });
+    res.status(200).json({ glassesToken: user.glassesToken, username: user.username });
+  } catch (err) {
+    console.error("Token fetch error:", err);
+    res.status(500).json({ error: "Server error fetching token." });
+  }
+});
+
+// ==========================================
+// ROUTE 8: Download Chat History from Cloud
+// ==========================================
+app.get('/api/chats', async (req, res) => {
+  const glassesToken = req.headers['authorization'] || req.query.token;
+  if (!glassesToken) return res.status(400).json({ error: "No token provided." });
+
+  try {
+    const messages = await ChatMessage.find({ glassesToken })
+        .sort({ timestamp: 1 })
+        .lean();
+
+    if (messages.length === 0) {
+      return res.status(200).json({ sessions: [] });
+    }
+
+    const sessionMap = {};
+    for (const msg of messages) {
+      if (!sessionMap[msg.sessionId]) {
+        sessionMap[msg.sessionId] = {
+          id:       msg.sessionId,
+          title:    msg.sessionTitle || 'New Chat',
+          messages: []
+        };
+      }
+      sessionMap[msg.sessionId].messages.push({
+        text:   msg.text,
+        isUser: msg.isUser
+      });
+    }
+
+    const sessions = Object.values(sessionMap);
+    console.log(`📥 Sending ${sessions.length} chat sessions to device`);
+    res.status(200).json({ sessions });
+
+  } catch (err) {
+    console.error("Chat fetch error:", err);
+    res.status(500).json({ error: "Server error fetching chat history." });
+  }
+});
+
+// ==========================================
+// ROUTE 9: Voice Query from Glasses Mic
+// ==========================================
+app.post('/api/voice', (req, res, next) => {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    appUpload.single('audio')(req, res, next);
+  } else {
+    express.raw({ type: '*/*', limit: '5mb' })(req, res, next);
+  }
+}, async (req, res) => {
+  const glassesToken = req.headers['x-glasses-token']
+      || req.headers['authorization']
+      || (req.body && req.body.glassesToken)
+      || null;
+
+  const preTranscribedText = req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)
+      ? req.body.text || null : null;
+
+  let audioFilePath = null;
+  if (req.file) {
+    audioFilePath = req.file.path;
+  } else if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+    audioFilePath = path.join(uploadDir, `voice-${Date.now()}.wav`);
+    fs.writeFileSync(audioFilePath, req.body);
   }
 
-  res.status(200).json({ hasAlerts: false, alerts:[] });
+  if (!audioFilePath && !preTranscribedText) {
+    return res.status(400).json({ error: "No audio file or text received." });
+  }
+  if (!glassesToken) {
+    if (audioFilePath && fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
+    return res.status(400).json({ error: "No glasses token provided." });
+  }
+
+  try {
+    const shortToken = glassesToken.substring(0, 8) + '...';
+    console.log(`\n🎙️ Voice query received from glasses (token: ${shortToken})`);
+
+    let transcription = preTranscribedText;
+    if (!transcription && audioFilePath) {
+      transcription = await transcribeAudio(audioFilePath);
+    }
+
+    if (!transcription) {
+      if (audioFilePath && fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
+      return res.status(500).json({ error: "Failed to transcribe audio." });
+    }
+
+    console.log(`📝 Transcription: "${transcription}"`);
+
+    const recentMemories = await Memory.find({ glassesToken }).sort({ timestamp: -1 }).limit(50);
+    const watchlistItems = await WatchlistItem.find({ isTracking: true, glassesToken });
+
+    const cleanContext = recentMemories.map(m => ({
+      time: new Date(m.timestamp).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata', weekday: 'short', year: 'numeric', month: 'short',
+        day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true
+      }),
+      summary:            m.summary,
+      objects:            m.objects,
+      environment:        m.environment,
+      action:             m.action,
+      unique_identifiers: m.unique_identifiers,
+      location: m.latitude ? `GPS: ${m.latitude}, ${m.longitude}` : "Location unknown"
+    }));
+
+    const cleanWatchlist = watchlistItems.map(w => ({
+      item:           w.itemName,
+      description:    w.description,
+      unique_anchors: w.unique_anchors
+    }));
+
+    const answer = await askAssistant(transcription, cleanContext, cleanWatchlist);
+    console.log(`🤖 Voice answer: ${answer}`);
+
+    if (audioFilePath && fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
+    res.status(200).json({ answer, transcription });
+
+  } catch (err) {
+    console.error("Voice route error:", err);
+    if (audioFilePath && fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
+    res.status(500).json({ error: "Voice processing failed." });
+  }
+});
+
+// -------------------------------------------------------
+// WHISPER TRANSCRIPTION HELPER
+// -------------------------------------------------------
+async function transcribeAudio(audioPath) {
+   const GROQ_API_KEY = process.env.GROQ_API_KEY;
+  if (!GROQ_API_KEY) {
+    console.warn("⚠️  GROQ_API_KEY not set — audio transcription skipped.");
+    return null;
+  }
+  try {
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('file', fs.createReadStream(audioPath), {
+      filename: path.basename(audioPath), contentType: 'audio/wav'
+    });
+    form.append('model', 'whisper-large-v3'); 
+    form.append('language', 'en');
+
+    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, ...form.getHeaders() },
+      body: form
+    });
+    const data = await response.json();
+    if (!response.ok) { 
+      console.error("Groq API error:", data); 
+      return null; 
+    }
+    return data.text || null;
+    
+  } catch (err) {
+    console.error("Groq transcription error:", err);
+    return null;
+  }
+}
+
+// ==========================================
+// CRON JOB: Semantic Compression at 2AM IST
+// ==========================================
+cron.schedule('30 20 * * *', async () => {
+  console.log('\n🕑 [CRON] Starting nightly semantic compression at 2:00 AM IST...');
+
+  try {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const rawMemories = await Memory.find({
+      isCompressed: false, timestamp: { $lt: yesterday }
+    }).sort({ timestamp: 1 });
+
+    if (rawMemories.length === 0) {
+      console.log('[CRON] No uncompressed memories to process tonight.');
+      return;
+    }
+
+    console.log(`[CRON] Found ${rawMemories.length} total memories across all users.`);
+
+    const tokenGroups = {};
+    for (const m of rawMemories) {
+      const token = m.glassesToken || 'unknown';
+      if (!tokenGroups[token]) tokenGroups[token] = [];
+      tokenGroups[token].push(m);
+    }
+
+    for (const [token, mems] of Object.entries(tokenGroups)) {
+      const shortId = token === 'unknown' ? 'unknown' : token.substring(0, 8) + '...';
+      console.log(`[CRON] Processing user ${shortId} — ${mems.length} memories`);
+
+      const cleanRaw = mems.map(m => ({
+        time:               m.capturedAt,
+        summary:            m.summary,
+        objects:            m.objects,
+        environment:        m.environment,
+        action:             m.action,
+        unique_identifiers: m.unique_identifiers,
+        location: m.latitude ? `GPS: ${m.latitude}, ${m.longitude}` : "Unknown"
+      }));
+
+      const compressed = await compressMemories(cleanRaw);
+
+      if (compressed) {
+        const compressedMemory = new Memory({
+          summary:      compressed,
+          text_found:   "Compressed summary",
+          objects:      [],
+          isCompressed: true,
+          glassesToken: token === 'unknown' ? null : token,
+          capturedAt:   new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+        });
+        await compressedMemory.save();
+        const ids = mems.map(m => m._id);
+        await Memory.deleteMany({ _id: { $in: ids } });
+        console.log(`✅ [CRON] User ${shortId} → Deleted ${mems.length} raw memories, saved 1 compressed summary.`);
+      } else {
+        console.log(`[CRON] AI compression failed for user ${shortId} — skipping.`);
+      }
+    }
+
+    console.log('[CRON] Nightly compression complete.');
+  } catch (err) {
+    console.error('[CRON] Compression error:', err);
+  }
 });
 
 // ==========================================
@@ -268,7 +602,5 @@ app.get('/api/alerts', (req, res) => {
 app.listen(port, '0.0.0.0', () => {
   console.log(`\n🚀 RecallCast Server running on port ${port}`);
   console.log(`📡 Listening on all network interfaces`);
-  console.log(`🕐 Server time: ${new Date().toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata'
-  })} IST`);
+  console.log(`🕐 Server time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`);
 });
