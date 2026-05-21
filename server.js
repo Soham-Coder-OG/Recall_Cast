@@ -98,8 +98,6 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
         const formattedText = Array.isArray(analysis.text_found)
             ? analysis.text_found.join(' | ') : (analysis.text_found || "None");
 
-        // ✅ V2.0 FIX: All rich fields restored — environment, action,
-        //    people_count, unique_identifiers were missing and are now saved
         const newMemory = new Memory({
           text_found:          formattedText,
           objects:             analysis.objects || [],
@@ -165,8 +163,6 @@ app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
     const analysis = await analyzeValuable(req.file.path);
 
     if (analysis && analysis.itemName) {
-      // ✅ V2.0 FIX: unique_anchors restored — this is what prevents the
-      //    "two iPhones" confusion bug. Was missing from the save.
       const newItem = new WatchlistItem({
         itemName:       analysis.itemName,
         description:    analysis.description,
@@ -193,7 +189,6 @@ app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
 
 // ==========================================
 // ROUTE 3: Handle Chat Queries
-// ✅ AUTO-SAVES both user question and AI answer to ChatHistory
 // ==========================================
 app.post('/api/ask', async (req, res) => {
   const { question, sessionId, sessionTitle } = req.body;
@@ -221,7 +216,6 @@ app.post('/api/ask', async (req, res) => {
       location: m.latitude ? `GPS: ${m.latitude}, ${m.longitude}` : "Location unknown"
     }));
 
-    // ✅ V2.0: Pass unique_anchors to AI so it can distinguish identical items
     const cleanWatchlist = watchlistItems.map(w => ({
       item:           w.itemName,
       description:    w.description,
@@ -231,7 +225,6 @@ app.post('/api/ask', async (req, res) => {
     const answer = await askAssistant(question, cleanContext, cleanWatchlist);
     console.log(`🤖 AI Answers: ${answer}`);
 
-    // ✅ Auto-save both messages to cloud if we have a token and session ID
     if (glassesToken && sessionId) {
       const title = sessionTitle || (question.length > 25 ? question.substring(0, 25) + '...' : question);
       try {
@@ -495,35 +488,50 @@ app.post('/api/voice', (req, res, next) => {
 });
 
 // -------------------------------------------------------
-// WHISPER TRANSCRIPTION HELPER
+// ✅ WHISPER TRANSCRIPTION HELPER — FIXED (Groq + Native Blob/FormData)
+// Root cause: old 'form-data' package creates a stream that native Node.js
+// fetch can't read, sending an empty file to Groq → "multipart: NextPart: EOF"
+// Fix: load the tiny WAV file into memory as a Blob, use native FormData.
+// No external packages needed — Node.js handles the boundary automatically.
 // -------------------------------------------------------
 async function transcribeAudio(audioPath) {
-   const GROQ_API_KEY = process.env.GROQ_API_KEY;
+  const GROQ_API_KEY = process.env.GROQ_API_KEY;
   if (!GROQ_API_KEY) {
     console.warn("⚠️  GROQ_API_KEY not set — audio transcription skipped.");
     return null;
   }
+
   try {
-    const FormData = require('form-data');
+    // 1. Read the 4-second WAV file directly into memory as a Buffer
+    const fileBuffer = fs.readFileSync(audioPath);
+
+    // 2. Use native Node.js Blob + FormData (no external packages)
+    //    Native fetch sets the Content-Type boundary automatically — fixes EOF bug
+    const blob = new Blob([fileBuffer], { type: 'audio/wav' });
     const form = new FormData();
-    form.append('file', fs.createReadStream(audioPath), {
-      filename: path.basename(audioPath), contentType: 'audio/wav'
-    });
-    form.append('model', 'whisper-large-v3'); 
+    form.append('file', blob, path.basename(audioPath));
+    form.append('model', 'whisper-large-v3');
     form.append('language', 'en');
 
+    // 3. DO NOT set Content-Type header manually — let native fetch do it
     const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, ...form.getHeaders() },
+      headers: {
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+        // ✅ No Content-Type here — native fetch sets multipart boundary correctly
+      },
       body: form
     });
+
     const data = await response.json();
-    if (!response.ok) { 
-      console.error("Groq API error:", data); 
-      return null; 
+    if (!response.ok) {
+      console.error("Groq API error:", data);
+      return null;
     }
+
+    console.log(`✅ Transcription successful: "${data.text}"`);
     return data.text || null;
-    
+
   } catch (err) {
     console.error("Groq transcription error:", err);
     return null;
