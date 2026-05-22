@@ -3,7 +3,7 @@
 // #include <HTTPClient.h>
 // #include <WebServer.h>
 // #include <Preferences.h>
-// #include <driver/i2s.h>
+// #include <driver/i2s_std.h>    // ✨ NEW: Modern Core 3.0 I2S Library
 // #include <ArduinoJson.h>
 // #include <Audio.h>             // Streaming Speaker Library
 // #include "soc/soc.h"           
@@ -12,7 +12,7 @@
 // // ==========================================
 // // CONFIGURATION
 // // ==========================================
-// String serverBaseUrl = "http://192.168.1.5:3000"; // put your own ip address 
+// String serverBaseUrl = "https://recall-cast-backend-server.onrender.com"; // Your Cloud Backend
 
 // const int BUTTON_PIN = 13; 
 
@@ -25,6 +25,8 @@
 // Preferences preferences;
 // WebServer server(80);
 // Audio audio; // Speaker Object
+
+// i2s_chan_handle_t rx_handle = NULL; // ✨ NEW: Core 3.0 I2S Handle
 
 // String savedSSID = "";
 // String savedPassword = "";
@@ -57,7 +59,7 @@
 //   config.xclk_freq_hz = 20000000;
 //   config.pixel_format = PIXFORMAT_JPEG;
 //   config.frame_size = FRAMESIZE_VGA;
-//   config.jpeg_quality = 10;
+//   config.jpeg_quality = 15; 
 //   config.fb_count = 1;
 
 //   esp_camera_init(&config);
@@ -69,25 +71,37 @@
 // }
 
 // // ==========================================
-// // MICROPHONE I2S CONFIG
+// // MICROPHONE I2S CONFIG (CORE 3.0 READY)
 // // ==========================================
 // void initMicrophone() {
-//   i2s_config_t i2s_config = {
-//     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-//     .sample_rate = sampleRate,
-//     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-//     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-//     .communication_format = I2S_COMM_FORMAT_I2S,
-//     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-//     .dma_buf_count = 8,
-//     .dma_buf_len = 1024,
-//     .use_apll = false,
-//     .tx_desc_auto_clear = false,
-//     .fixed_mclk = 0
+//   // 1. Create a new RX channel (✨ FIXED: Force I2S_NUM_1 because Camera uses I2S_NUM_0)
+//   i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
+//   i2s_new_channel(&chan_cfg, NULL, &rx_handle);
+
+//   // 2. Configure Standard Philips Mode
+//   i2s_std_config_t std_cfg = {
+//     .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(sampleRate),
+//     .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+//     .gpio_cfg = {
+//         .mclk = I2S_GPIO_UNUSED,
+//         .bclk = (gpio_num_t)I2S_SCK,
+//         .ws   = (gpio_num_t)I2S_WS,
+//         .dout = I2S_GPIO_UNUSED,
+//         .din  = (gpio_num_t)I2S_SD,
+//         .invert_flags = {
+//             .mclk_inv = false,
+//             .bclk_inv = false,
+//             .ws_inv   = false,
+//         },
+//     },
 //   };
-//   i2s_pin_config_t pin_config = { .bck_io_num = I2S_SCK, .ws_io_num = I2S_WS, .data_out_num = I2S_PIN_NO_CHANGE, .data_in_num = I2S_SD };
-//   i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
-//   i2s_set_pin(I2S_NUM_0, &pin_config);
+  
+//   // 3. Read only the left channel for a mono microphone
+//   std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
+
+//   // 4. Initialize and Enable the microphone
+//   i2s_channel_init_std_mode(rx_handle, &std_cfg);
+//   i2s_channel_enable(rx_handle);
 // }
 
 // void generateWavHeader(byte* header, int wavSize) {
@@ -107,7 +121,7 @@
 // }
 
 // // ==========================================
-// // VOICE PROCESSING (Record -> Backend TTS Stream)
+// // VOICE PROCESSING (Record -> Edge TTS Speech)
 // // ==========================================
 // void recordAndSendAudio() {
 //   Serial.println("\n🎙️ Listening (4 seconds)...");
@@ -116,8 +130,10 @@
 //   if (wavData == NULL) { Serial.println("❌ Failed to allocate PSRAM"); return; }
 
 //   generateWavHeader(wavData, totalWavSize);
+  
+//   // ✨ NEW: Read data using Core 3.0 API
 //   size_t bytesRead = 0;
-//   i2s_read(I2S_NUM_0, wavData + headerSize, audioSize, &bytesRead, portMAX_DELAY);
+//   i2s_channel_read(rx_handle, wavData + headerSize, audioSize, &bytesRead, portMAX_DELAY);
   
 //   Serial.println("✅ Recording finished! Asking AI...");
 
@@ -132,31 +148,37 @@
 //   free(wavData); 
 
 //   if (httpResponseCode == 200) {
-//     DynamicJsonDocument doc(2048);
+//     JsonDocument doc; 
 //     deserializeJson(doc, responseBody);
+    
+//     // ✅ FIX: Read the text answer directly, no audioUrl needed!
 //     const char* aiAnswer = doc["answer"];
-//     const char* audioUrl = doc["audioUrl"]; // 🚀 Get the URL to the MP3 from Node.js!
     
 //     Serial.printf("🤖 AI Answer: %s\n", aiAnswer);
-//     Serial.printf("🔗 Streaming MP3 from: %s\n", audioUrl);
 
-//     // 1. Turn off Microphone driver
-//     i2s_driver_uninstall(I2S_NUM_0);
+//     // 1. Turn off and delete Microphone driver completely
+//     i2s_channel_disable(rx_handle);
+//     i2s_del_channel(rx_handle);
 
 //     // 2. Turn on Speaker driver & pinout
 //     audio.setPinout(I2S_SCK, I2S_WS, I2S_DOUT);
 //     audio.setVolume(100); 
 
-//     // 3. Play the stream directly from your Node.js Backend!
-//     Serial.println("🔊 Streaming audio...");
-//     audio.connecttohost(audioUrl); 
+//     // 3. Play the stream using ESP32's built-in Edge Text-to-Speech
+//     Serial.println("🔊 Speaking...");
+//     audio.connecttospeech(aiAnswer, "en"); // 🚀 FIXED
 
 //     while(audio.isRunning()) {
 //       audio.loop();
 //     }
 //     Serial.println("🤫 Finished speaking.");
 
-//     // 4. Turn Microphone driver back on for next time
+//     // 4. Force Speaker library to release the shared pins
+//     audio.stopSong(); 
+//     audio.setPinout(-1, -1, -1); 
+//     delay(10); 
+
+//     // 5. Turn Microphone driver back on for next time
 //     initMicrophone();
 
 //   } else {
@@ -174,7 +196,7 @@
 //     preferences.putString("token", server.arg("token"));
 
 //     server.send(200, "application/json", "{\"status\":\"success\", \"message\":\"Credentials saved.\"}");
-//     Serial.println("\n✅ Credentials Received from App! Rebooting in 2s...");
+//     Serial.println("\n✅ Credentials Received! Rebooting in 2s...");
 //     delay(2000); ESP.restart(); 
 //   } else { server.send(400, "application/json", "{\"status\":\"error\"}"); }
 // }
@@ -183,7 +205,6 @@
 // // SETUP
 // // ==========================================
 // void setup() {
-//   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); 
 //   Serial.begin(115200);
 //   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
@@ -229,12 +250,15 @@
 //     isButtonPressed = false;
 //     unsigned long pressDuration = millis() - buttonPressTime;
     
+//     Serial.printf("🔘 Button released after %lu ms\n", pressDuration);
+    
 //     if (pressDuration >= 5000) {
 //       Serial.println("\n🚨 FACTORY RESET! Wiping memory...");
 //       preferences.clear();
 //       delay(1000); ESP.restart();
-//     } else if (pressDuration > 50 && pressDuration < 1000 && !isSetupMode) {
-//       recordAndSendAudio(); // Tap to Wake!
+//     } 
+//     else if (pressDuration > 50 && !isSetupMode) {
+//       recordAndSendAudio(); 
 //     }
 //   }
 //   lastButtonState = buttonState;
@@ -257,24 +281,3 @@
 //     http.end(); esp_camera_fb_return(fb);
 //   }
 // }
-
-
-
-//Wirings :-
-// 🎙️ 1. The Microphone (INMP441)
-// VDD ➔ 3.3V pin (Do NOT use 5V or you will fry it!)
-// GND ➔ GND pin
-// L/R ➔ GND pin (Crucial: This forces it into the "Left Channel" so the code can hear it).
-// SCK ➔ GPIO 14 (Shared Clock)
-// WS ➔ GPIO 15 (Shared Word Select)
-// SD ➔ GPIO 2 (Microphone Data IN)
-// 🔊 2. The Speaker Amplifier (MAX98357A)
-// VIN / VCC ➔ 5V pin (5V gives the speaker the loudest volume, but 3.3V works too).
-// GND ➔ GND pin
-// BCLK ➔ GPIO 14 (Solder this to the exact same wire/pin as the Microphone's SCK).
-// LRC ➔ GPIO 15 (Solder this to the exact same wire/pin as the Microphone's WS).
-// DIN ➔ GPIO 12 (Speaker Data OUT from the ESP32).
-// 🔘 3. The Push Button (Tap to Wake / Hold to Reset)
-// Button Leg 1 ➔ GPIO 13
-// Button Leg 2 ➔ GND pin
-// (No resistors needed! The C++ code uses INPUT_PULLUP internally).
