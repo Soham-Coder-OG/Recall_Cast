@@ -25,9 +25,7 @@ const appUpload = multer({ dest: 'uploads/' });
 let imageBatchQueue = [];
 const BATCH_SIZE = 3;
 
-// Per-user GPS Map: glassesToken -> { lat, lng, time }
 const userLocations = new Map();
-// Per-user alert mailbox: glassesToken -> [alerts]
 const activeAlerts = new Map();
 
 // ==========================================
@@ -98,14 +96,26 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
         const formattedText = Array.isArray(analysis.text_found)
             ? analysis.text_found.join(' | ') : (analysis.text_found || "None");
 
+        // ✅ FIX: If AI sends an array for unique_identifiers, convert to string
+        //    e.g. [] → "None", ["red tag", "scratched"] → "red tag, scratched"
+        const formattedIdentifiers = Array.isArray(analysis.unique_identifiers)
+            ? (analysis.unique_identifiers.length > 0
+                ? analysis.unique_identifiers.join(', ')
+                : "None")
+            : (analysis.unique_identifiers || "None");
+
+        // ✅ FIX: Force people_count to String — AI sometimes sends integer 2
+        //    instead of string "2", which fails MongoDB's String cast
+        const formattedPeople = String(analysis.people_count || "0");
+
         const newMemory = new Memory({
           text_found:          formattedText,
           objects:             analysis.objects || [],
           summary:             analysis.summary || "No clear summary available.",
-          environment:         analysis.environment || null,
-          action:              analysis.action || null,
-          people_count:        analysis.people_count || null,
-          unique_identifiers:  analysis.unique_identifiers || null,
+          environment:         analysis.environment || "Unknown",
+          action:              analysis.action || "Unknown",
+          people_count:        formattedPeople,
+          unique_identifiers:  formattedIdentifiers,
           latitude:            userLat,
           longitude:           userLng,
           capturedAt:          userTime || new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
@@ -344,7 +354,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 // ==========================================
-// ROUTE 7: Get Glasses Token (For App Sidebar Display)
+// ROUTE 7: Get Glasses Token
 // ==========================================
 app.get('/api/token', async (req, res) => {
   const authToken = req.headers['authorization'] || req.query.token;
@@ -488,11 +498,7 @@ app.post('/api/voice', (req, res, next) => {
 });
 
 // -------------------------------------------------------
-// ✅ WHISPER TRANSCRIPTION HELPER — FIXED (Groq + Native Blob/FormData)
-// Root cause: old 'form-data' package creates a stream that native Node.js
-// fetch can't read, sending an empty file to Groq → "multipart: NextPart: EOF"
-// Fix: load the tiny WAV file into memory as a Blob, use native FormData.
-// No external packages needed — Node.js handles the boundary automatically.
+// WHISPER TRANSCRIPTION HELPER — Groq + Native Blob/FormData
 // -------------------------------------------------------
 async function transcribeAudio(audioPath) {
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
@@ -502,24 +508,16 @@ async function transcribeAudio(audioPath) {
   }
 
   try {
-    // 1. Read the 4-second WAV file directly into memory as a Buffer
     const fileBuffer = fs.readFileSync(audioPath);
-
-    // 2. Use native Node.js Blob + FormData (no external packages)
-    //    Native fetch sets the Content-Type boundary automatically — fixes EOF bug
     const blob = new Blob([fileBuffer], { type: 'audio/wav' });
     const form = new FormData();
     form.append('file', blob, path.basename(audioPath));
     form.append('model', 'whisper-large-v3');
     form.append('language', 'en');
 
-    // 3. DO NOT set Content-Type header manually — let native fetch do it
     const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`
-        // ✅ No Content-Type here — native fetch sets multipart boundary correctly
-      },
+      headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` },
       body: form
     });
 
