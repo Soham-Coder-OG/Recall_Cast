@@ -96,16 +96,12 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
         const formattedText = Array.isArray(analysis.text_found)
             ? analysis.text_found.join(' | ') : (analysis.text_found || "None");
 
-        // ✅ FIX: If AI sends an array for unique_identifiers, convert to string
-        //    e.g. [] → "None", ["red tag", "scratched"] → "red tag, scratched"
         const formattedIdentifiers = Array.isArray(analysis.unique_identifiers)
             ? (analysis.unique_identifiers.length > 0
                 ? analysis.unique_identifiers.join(', ')
                 : "None")
             : (analysis.unique_identifiers || "None");
 
-        // ✅ FIX: Force people_count to String — AI sometimes sends integer 2
-        //    instead of string "2", which fails MongoDB's String cast
         const formattedPeople = String(analysis.people_count || "0");
 
         const newMemory = new Memory({
@@ -162,28 +158,42 @@ app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
       lat = loc.lat; lng = loc.lng;
     }
 
-    const timestamp = req.body.timestamp || new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    // ✅ FIX 1: Use new Date() for addedAt — the Indian locale string
+    //    "26/05/2026 10:22" is not a format MongoDB's Date type can parse,
+    //    causing "Cast to date failed". new Date() gives a valid JS Date.
+    //    We keep timestamp as a string only for the userLocations map and logs.
+    const timestampString = req.body.timestamp
+        || new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    const addedAtDate = new Date(); // Always a valid Date for MongoDB
 
     if (glassesToken && lat && lat !== 0.0) {
       const existing = userLocations.get(glassesToken) || {};
-      userLocations.set(glassesToken, { lat, lng, time: existing.time || timestamp });
+      userLocations.set(glassesToken, { lat, lng, time: existing.time || timestampString });
     }
 
-    console.log(`📍 Watchlist item location: [${lat}, ${lng}] at ${timestamp}`);
+    console.log(`📍 Watchlist item location: [${lat}, ${lng}] at ${timestampString}`);
     const analysis = await analyzeValuable(req.file.path);
 
     if (analysis && analysis.itemName) {
+      // ✅ FIX 2: Sanitize unique_anchors — AI returns an Array but the schema
+      //    expects a String. Same fix applied to Route 1 previously.
+      const formattedAnchors = Array.isArray(analysis.unique_anchors)
+          ? (analysis.unique_anchors.length > 0
+              ? analysis.unique_anchors.join(', ')
+              : "None")
+          : (analysis.unique_anchors || "None");
+
       const newItem = new WatchlistItem({
         itemName:       analysis.itemName,
         description:    analysis.description,
-        unique_anchors: analysis.unique_anchors || null,
+        unique_anchors: formattedAnchors,
         latitude:       lat,
         longitude:      lng,
-        addedAt:        timestamp,
+        addedAt:        addedAtDate,      // ✅ Valid Date object, not locale string
         glassesToken:   glassesToken
       });
       await newItem.save();
-      console.log(`✅ Added to Watchlist: ${analysis.itemName} [Anchors: ${analysis.unique_anchors || "None"}] at ${timestamp}`);
+      console.log(`✅ Added to Watchlist: ${analysis.itemName} [Anchors: ${formattedAnchors}] at ${timestampString}`);
       fs.unlinkSync(req.file.path);
       res.status(200).json({ success: true, item: analysis.itemName });
     } else {
