@@ -104,9 +104,33 @@ app.post('/upload', express.raw({ type: 'image/jpeg', limit: '10mb' }), async (r
 
         const formattedPeople = String(analysis.people_count || "0");
 
+        // ✅ FIX: The AI sometimes returns objects as an array of {type, details}
+        //    objects instead of plain strings. The schema expects [String].
+        //    Convert each element: if it's an object, stringify it to
+        //    "type: details" format. If already a string, keep it as-is.
+        //    If the whole field is a string (AI returned a JSON blob), wrap it.
+        let formattedObjects = [];
+        if (Array.isArray(analysis.objects)) {
+          formattedObjects = analysis.objects.map(obj => {
+            if (typeof obj === 'string') return obj;
+            if (typeof obj === 'object' && obj !== null) {
+              // Convert {type: 'Lanyard', details: 'Blue...'} → "Lanyard: Blue..."
+              if (obj.type && obj.details) return `${obj.type}: ${obj.details}`;
+              if (obj.type)               return obj.type;
+              // Fallback for any other object shape
+              return JSON.stringify(obj);
+            }
+            return String(obj);
+          });
+        } else if (typeof analysis.objects === 'string') {
+          // AI returned entire array as a string — wrap in array
+          formattedObjects = [analysis.objects];
+        }
+        // If null/undefined, stays as empty array []
+
         const newMemory = new Memory({
           text_found:          formattedText,
-          objects:             analysis.objects || [],
+          objects:             formattedObjects,
           summary:             analysis.summary || "No clear summary available.",
           environment:         analysis.environment || "Unknown",
           action:              analysis.action || "Unknown",
@@ -158,13 +182,9 @@ app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
       lat = loc.lat; lng = loc.lng;
     }
 
-    // ✅ FIX 1: Use new Date() for addedAt — the Indian locale string
-    //    "26/05/2026 10:22" is not a format MongoDB's Date type can parse,
-    //    causing "Cast to date failed". new Date() gives a valid JS Date.
-    //    We keep timestamp as a string only for the userLocations map and logs.
     const timestampString = req.body.timestamp
         || new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    const addedAtDate = new Date(); // Always a valid Date for MongoDB
+    const addedAtDate = new Date();
 
     if (glassesToken && lat && lat !== 0.0) {
       const existing = userLocations.get(glassesToken) || {};
@@ -175,8 +195,6 @@ app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
     const analysis = await analyzeValuable(req.file.path);
 
     if (analysis && analysis.itemName) {
-      // ✅ FIX 2: Sanitize unique_anchors — AI returns an Array but the schema
-      //    expects a String. Same fix applied to Route 1 previously.
       const formattedAnchors = Array.isArray(analysis.unique_anchors)
           ? (analysis.unique_anchors.length > 0
               ? analysis.unique_anchors.join(', ')
@@ -189,7 +207,7 @@ app.post('/api/watchlist', appUpload.single('image'), async (req, res) => {
         unique_anchors: formattedAnchors,
         latitude:       lat,
         longitude:      lng,
-        addedAt:        addedAtDate,      // ✅ Valid Date object, not locale string
+        addedAt:        addedAtDate,
         glassesToken:   glassesToken
       });
       await newItem.save();
