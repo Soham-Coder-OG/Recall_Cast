@@ -184,4 +184,72 @@ async function compressMemories(rawMemories) {
       }
 }
 
-module.exports = { analyzeScene, askAssistant, analyzeValuable, compressMemories };
+// ==========================================
+// 5. V2.0 DAILY SUMMARIZER (End of day recap)
+// ==========================================
+async function generateDaySummary(rawMemories, voiceMemories, dateString) {
+    const prompt = `
+      You are an AI diarist. I am giving you an array of a user's visual memories and voice conversation memories captured throughout today (${dateString}).
+      Your job is to write a well-structured, medium-detailed summary of what the person saw, did, and talked about.
+      
+      RULES:
+      1. Start with the day and date explicitly (e.g., "Today, ${dateString}, ...").
+      2. Group visual activities logically into a cohesive narrative (morning, afternoon, evening if possible).
+      3. CRITICAL: Include a clear heading or section for "Voice Summary" and weave the voice memories prominently into the narrative (e.g., "You have talked about this medicine at 10am and after that you talked about keys which were placed under the pillow at 12:10pm").
+      4. Keep it engaging but professional, like a personalized memory recap.
+      5. Do not invent details; rely strictly on the provided logs.
+      6. Return ONLY the summary paragraph(s). Do not use markdown (except for the Voice Summary heading). Do not return JSON.
+      7. If the dateString specifies a time (e.g., "Up to 3:00 PM"), frame the summary as an ongoing day.
+      
+      Visual Logs: ${JSON.stringify(rawMemories)}
+      Voice Logs: ${JSON.stringify(voiceMemories)}
+    `;
+    try {
+        console.log(`📝 [V2.0] Generating Daily Summary for ${rawMemories.length} memories...`);
+        const response = await fetch(CLOUD_AI_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
+          body: JSON.stringify({ model: "google/gemma-3-27b-it", messages:[{ role: "user", content: prompt }], temperature: 0.3 })
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) return null; 
+        return data.choices[0].message.content.trim();
+      } catch (error) { 
+        console.error("Day Summary Error:", error);
+        return null; 
+      }
+}
+
+// ==========================================
+// 6. V2.0 VOICE MEMORY CONTEXT EXTRACTOR
+// ==========================================
+async function summarizeVoiceMemory(transcription) {
+    const prompt = `
+      You are an AI tasked with analyzing a transcribed audio recording from a wearable camera.
+      Extract the most important details from the conversation and summarize them.
+      Specifically, note any mentioned objects (like keys, medicine, wallets), locations, or tasks.
+      
+      RULES:
+      1. Write a cohesive, short summary of the conversation.
+      2. Keep the focus strictly on what the user heard or said.
+      3. Return ONLY the summary paragraph. Do not use markdown. Do not return JSON.
+      
+      Transcription: "${transcription}"
+    `;
+    try {
+        console.log(`🎙️ [V2.0] Summarizing voice memory...`);
+        const response = await fetch(CLOUD_AI_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
+          body: JSON.stringify({ model: "google/gemma-3-27b-it", messages:[{ role: "user", content: prompt }], temperature: 0.2 })
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) return null; 
+        return data.choices[0].message.content.trim();
+      } catch (error) { 
+        console.error("Voice Summary Error:", error);
+        return null; 
+      }
+}
+
+module.exports = { analyzeScene, askAssistant, analyzeValuable, compressMemories, generateDaySummary, summarizeVoiceMemory };

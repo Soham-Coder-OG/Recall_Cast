@@ -36,6 +36,11 @@
 // unsigned long buttonPressTime = 0;
 // bool isButtonPressed = false;
 // int lastButtonState = HIGH;
+// 
+// // Multi-click tracking
+// int clickCount = 0;
+// unsigned long lastClickTime = 0;
+// bool isPassiveRecording = false;
 
 // const int sampleRate = 16000;
 // const int recordDuration = 4; 
@@ -185,6 +190,24 @@
 //     Serial.printf("❌ Error from server: %d\n", httpResponseCode);
 //   }
 // }
+// 
+// // ==========================================
+// // PASSIVE VOICE MEMORY (Background Streaming)
+// // ==========================================
+// void startPassiveRecording() {
+//   Serial.println("\n🎙️ [PASSIVE] Started background voice memory recording...");
+//   isPassiveRecording = true;
+//   
+//   // In a real scenario, this would use Chunked Transfer Encoding to stream audio directly
+//   // to the server (e.g. /api/voice/memory) to avoid running out of ESP32 PSRAM.
+// }
+// 
+// void stopAndUploadPassiveRecording() {
+//   Serial.println("\n🛑 [PASSIVE] Stopped recording. Uploading context to server...");
+//   isPassiveRecording = false;
+//   
+//   // End HTTP chunked stream and trigger backend processing
+// }
 
 // // ==========================================
 // // SOFT AP PROVISIONING ROUTE
@@ -258,10 +281,33 @@
 //       delay(1000); ESP.restart();
 //     } 
 //     else if (pressDuration > 50 && !isSetupMode) {
-//       recordAndSendAudio(); 
+//       // Detect rapid clicks (within 500ms window)
+//       if (millis() - lastClickTime < 500) {
+//         clickCount++;
+//       } else {
+//         clickCount = 1;
+//       }
+//       lastClickTime = millis();
 //     }
 //   }
 //   lastButtonState = buttonState;
+// 
+//   // Evaluate clicks after window expires
+//   if (clickCount > 0 && (millis() - lastClickTime > 500)) {
+//     if (clickCount == 1) {
+//       // Single tap -> Active query (record 4s and ask AI)
+//       if (!isPassiveRecording) recordAndSendAudio(); 
+//     } 
+//     else if (clickCount >= 2) {
+//       // Double tap -> Toggle Passive Voice Memory
+//       if (!isPassiveRecording) {
+//         startPassiveRecording();
+//       } else {
+//         stopAndUploadPassiveRecording();
+//       }
+//     }
+//     clickCount = 0;
+//   }
 
 //   if (isSetupMode) { server.handleClient(); return; }
 

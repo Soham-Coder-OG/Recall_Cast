@@ -50,7 +50,8 @@ const userSchema = new mongoose.Schema({
   username:     { type: String, required: true, unique: true, trim: true },
   email:        { type: String, required: true, unique: true, trim: true, lowercase: true },
   password:     { type: String, required: true },
-  glassesToken: { type: String, unique: true, sparse: true }
+  glassesToken: { type: String, unique: true, sparse: true },
+  lostPromptCooldownUntil: { type: Date }
 });
 
 const User = mongoose.model('User', userSchema);
@@ -75,4 +76,28 @@ const chatMessageSchema = new mongoose.Schema({
 
 const ChatMessage = mongoose.model('ChatMessage', chatMessageSchema);
 
-module.exports = { Memory, WatchlistItem, User, ChatMessage };
+// -------------------------------------------------------
+// 5. DAY SUMMARY BLUEPRINT (Daily Memory Summaries)
+// -------------------------------------------------------
+const daySummarySchema = new mongoose.Schema({
+  date:         { type: String, required: true },
+  summary:      { type: String, required: true },
+  glassesToken: { type: String, required: true, index: true },
+  timestamp:    { type: Date, default: Date.now }
+});
+
+const DaySummary = mongoose.model('DaySummary', daySummarySchema);
+
+// -------------------------------------------------------
+// 6. VOICE MEMORY BLUEPRINT (Passive Audio Context)
+// -------------------------------------------------------
+const voiceMemorySchema = new mongoose.Schema({
+  timestamp:    { type: Date, default: Date.now },
+  transcription:{ type: String, required: true },
+  summary:      { type: String, required: true },
+  glassesToken: { type: String, required: true, index: true }
+});
+
+const VoiceMemory = mongoose.model('VoiceMemory', voiceMemorySchema);
+
+module.exports = { Memory, WatchlistItem, User, ChatMessage, DaySummary, VoiceMemory };
