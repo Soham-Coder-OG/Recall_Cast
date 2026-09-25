@@ -1,8 +1,8 @@
 const fs = require('fs');
-require('dotenv').config(); 
+require('dotenv').config();
 
-const CLOUD_AI_URL = "https://openrouter.ai/api/v1/chat/completions"; 
-const API_KEY = process.env.OPENROUTER_API_KEY; 
+const CLOUD_AI_URL = "https://openrouter.ai/api/v1/chat/completions";
+const API_KEY = process.env.OPENROUTER_API_KEY;
 
 function getBase64Image(path) {
   const image = fs.readFileSync(path);
@@ -12,7 +12,7 @@ function getBase64Image(path) {
 // ==========================================
 // 1. V2.0 BATCH IMAGE ANALYSIS (Deep Extraction)
 // ==========================================
-async function analyzeScene(imagePaths, watchlistContext =[]) {
+async function analyzeScene(imagePaths, watchlistContext = []) {
   const currentTime = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
   const watchlistStr = watchlistContext.length > 0 ? JSON.stringify(watchlistContext) : "No items on watchlist.";
 
@@ -35,7 +35,7 @@ async function analyzeScene(imagePaths, watchlistContext =[]) {
     Do not use markdown. Return raw JSON only.
   `;
 
-  const contentArray =[{ type: "text", text: prompt }];
+  const contentArray = [{ type: "text", text: prompt }];
   for (const path of imagePaths) contentArray.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${getBase64Image(path)}` } });
 
   try {
@@ -43,15 +43,15 @@ async function analyzeScene(imagePaths, watchlistContext =[]) {
     const response = await fetch(CLOUD_AI_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages:[{ role: "user", content: contentArray }], temperature: 0.1 })
+      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: contentArray }], temperature: 0.1 })
     });
     const data = await response.json();
-    if (!response.ok || data.error) return null; 
+    if (!response.ok || data.error) return null;
     let responseText = data.choices[0].message.content.replace(/```json/gi, '').replace(/```/gi, '').trim();
     return JSON.parse(responseText);
-  } catch (error) { 
+  } catch (error) {
     console.error("Batch Analysis Error:", error);
-    return null; 
+    return null;
   }
 }
 
@@ -73,15 +73,15 @@ async function analyzeValuable(imagePath) {
     const response = await fetch(CLOUD_AI_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages:[{ role: "user", content:[ { type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${getBase64Image(imagePath)}` } }]}], temperature: 0.1 })
+      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${getBase64Image(imagePath)}` } }] }], temperature: 0.1 })
     });
     const data = await response.json();
-    if (!response.ok || data.error) return null; 
+    if (!response.ok || data.error) return null;
     let responseText = data.choices[0].message.content.replace(/```json/gi, '').replace(/```/gi, '').trim();
     return JSON.parse(responseText);
-  } catch (error) { 
+  } catch (error) {
     console.error("Watchlist Scan Error:", error);
-    return null; 
+    return null;
   }
 }
 
@@ -89,16 +89,16 @@ async function analyzeValuable(imagePath) {
 // 3. V2.0 CHAT ASSISTANT (Guardrails, Maps & TIME AWARENESS)
 // ==========================================
 async function askAssistant(question, memoryContext, watchlistContext) {
-  
-  const currentDateTime = new Date().toLocaleString('en-IN', { 
-      timeZone: 'Asia/Kolkata', 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric', 
-      hour: '2-digit', 
-      minute: '2-digit', 
-      hour12: true 
+
+  const currentDateTime = new Date().toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
   });
 
   const prompt = `
@@ -141,14 +141,14 @@ ITEM FOUND WITH LOCATION: If the item IS in the memory log AND has GPS coordinat
     const response = await fetch(CLOUD_AI_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages:[{ role: "system", content: prompt }, { role: "user", content: question }], temperature: 0.1, max_tokens: 200 })
+      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "system", content: prompt }, { role: "user", content: question }], temperature: 0.1, max_tokens: 200 })
     });
     const data = await response.json();
     if (!response.ok || data.error) return "Sorry, my cloud connection was briefly interrupted.";
     return data.choices[0].message.content.trim();
-  } catch (error) { 
+  } catch (error) {
     console.error("Chat Error:", error);
-    return "Sorry, I am having trouble accessing your memory banks right now."; 
+    return "Sorry, I am having trouble accessing your memory banks right now.";
   }
 }
 
@@ -156,7 +156,7 @@ ITEM FOUND WITH LOCATION: If the item IS in the memory log AND has GPS coordinat
 // 4. V2.0 CRON JOB SUMMARIZER (Semantic Compression)
 // ==========================================
 async function compressMemories(rawMemories) {
-    const prompt = `
+  const prompt = `
       You are a data optimization AI. I am giving you an array of chronological raw memory logs from a user's day.
       Your job is to perform "Semantic Compression". 
       
@@ -168,27 +168,27 @@ async function compressMemories(rawMemories) {
       
       Raw Logs: ${JSON.stringify(rawMemories)}
     `;
-    try {
-        console.log(`🗜️ [V2.0] Semantically compressing ${rawMemories.length} logs...`);
-        const response = await fetch(CLOUD_AI_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-          body: JSON.stringify({ model: "google/gemma-3-27b-it", messages:[{ role: "user", content: prompt }], temperature: 0.3 })
-        });
-        const data = await response.json();
-        if (!response.ok || data.error) return null; 
-        return data.choices[0].message.content.trim();
-      } catch (error) { 
-        console.error("Compression Error:", error);
-        return null; 
-      }
+  try {
+    console.log(`🗜️ [V2.0] Semantically compressing ${rawMemories.length} logs...`);
+    const response = await fetch(CLOUD_AI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
+      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: prompt }], temperature: 0.3 })
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) return null;
+    return data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error("Compression Error:", error);
+    return null;
+  }
 }
 
 // ==========================================
 // 5. V2.0 DAILY SUMMARIZER (End of day recap)
 // ==========================================
 async function generateDaySummary(rawMemories, voiceMemories, dateString) {
-    const prompt = `
+  const prompt = `
       You are an AI diarist. I am giving you an array of a user's visual memories and voice conversation memories captured throughout today (${dateString}).
       Your job is to write a well-structured, medium-detailed summary of what the person saw, did, and talked about.
       
@@ -204,27 +204,27 @@ async function generateDaySummary(rawMemories, voiceMemories, dateString) {
       Visual Logs: ${JSON.stringify(rawMemories)}
       Voice Logs: ${JSON.stringify(voiceMemories)}
     `;
-    try {
-        console.log(`📝 [V2.0] Generating Daily Summary for ${rawMemories.length} memories...`);
-        const response = await fetch(CLOUD_AI_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-          body: JSON.stringify({ model: "google/gemma-3-27b-it", messages:[{ role: "user", content: prompt }], temperature: 0.3 })
-        });
-        const data = await response.json();
-        if (!response.ok || data.error) return null; 
-        return data.choices[0].message.content.trim();
-      } catch (error) { 
-        console.error("Day Summary Error:", error);
-        return null; 
-      }
+  try {
+    console.log(`📝 [V2.0] Generating Daily Summary for ${rawMemories.length} memories...`);
+    const response = await fetch(CLOUD_AI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
+      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: prompt }], temperature: 0.3 })
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) return null;
+    return data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error("Day Summary Error:", error);
+    return null;
+  }
 }
 
 // ==========================================
 // 6. V2.0 VOICE MEMORY CONTEXT EXTRACTOR
 // ==========================================
 async function summarizeVoiceMemory(transcription) {
-    const prompt = `
+  const prompt = `
       You are an AI tasked with analyzing a transcribed audio recording from a wearable camera.
       Extract the most important details from the conversation and summarize them.
       Specifically, note any mentioned objects (like keys, medicine, wallets), locations, or tasks.
@@ -236,20 +236,48 @@ async function summarizeVoiceMemory(transcription) {
       
       Transcription: "${transcription}"
     `;
-    try {
-        console.log(`🎙️ [V2.0] Summarizing voice memory...`);
-        const response = await fetch(CLOUD_AI_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-          body: JSON.stringify({ model: "google/gemma-3-27b-it", messages:[{ role: "user", content: prompt }], temperature: 0.2 })
-        });
-        const data = await response.json();
-        if (!response.ok || data.error) return null; 
-        return data.choices[0].message.content.trim();
-      } catch (error) { 
-        console.error("Voice Summary Error:", error);
-        return null; 
-      }
+  try {
+    console.log(`🎙️ [V2.0] Summarizing voice memory...`);
+    const response = await fetch(CLOUD_AI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
+      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: prompt }], temperature: 0.2 })
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) return null;
+    return data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error("Voice Summary Error:", error);
+    return null;
+  }
+}
+// ==========================================
+// 7. V2.0 KEYWORD EXTRACTOR (For RAG Search)
+// ==========================================
+async function extractKeywords(question) {
+  const prompt = `
+      Extract the 1 or 2 most important keywords (objects, places, or subjects) from the following question to be used in a database search.
+      Return ONLY a single comma-separated list of keywords. No other text.
+      If it's a general greeting or non-specific question (e.g. "how are you", "what's up"), return EXACTLY the word "NONE".
+      
+      Question: "${question}"
+    `;
+  try {
+    console.log(`🔍 Extracting keywords for DB search...`);
+    const response = await fetch(CLOUD_AI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
+      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 50 })
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) return [];
+    const keywords = data.choices[0].message.content.trim();
+    if (keywords === "NONE" || keywords === "") return [];
+    return keywords.split(',').map(k => k.trim());
+  } catch (error) {
+    console.error("Keyword Extraction Error:", error);
+    return [];
+  }
 }
 
-module.exports = { analyzeScene, askAssistant, analyzeValuable, compressMemories, generateDaySummary, summarizeVoiceMemory };
+module.exports = { analyzeScene, askAssistant, analyzeValuable, compressMemories, generateDaySummary, summarizeVoiceMemory, extractKeywords };

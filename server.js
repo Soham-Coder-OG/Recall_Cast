@@ -7,7 +7,7 @@ const bcrypt = require('bcrypt');
 const cron = require('node-cron');
 const crypto = require('crypto');
 
-const { analyzeScene, askAssistant, analyzeValuable, compressMemories, generateDaySummary, summarizeVoiceMemory } = require('./aiService');
+const { analyzeScene, askAssistant, analyzeValuable, compressMemories, generateDaySummary, summarizeVoiceMemory, extractKeywords } = require('./aiService');
 const { Memory, WatchlistItem, User, ChatMessage, DaySummary, VoiceMemory } = require('./db');
 
 const app = express();
@@ -237,20 +237,38 @@ app.post('/api/ask', async (req, res) => {
 
   try {
     const memoryQuery = glassesToken ? { glassesToken } : {};
-    const recentMemories = await Memory.find(memoryQuery).sort({ timestamp: -1 }).limit(100);
+    
+    // 1. Fetch Top 20 Recent Memories (for immediate context)
+    const recentMemories = await Memory.find(memoryQuery).sort({ timestamp: -1 }).limit(20);
+    
+    // 2. Extract Keywords & Fetch Historical Matches (RAG)
+    const keywords = await extractKeywords(question);
+    let matchedMemories = [];
+    if (keywords && keywords.length > 0) {
+      const searchString = keywords.join(" ");
+      console.log(`🔍 RAG Search for: "${searchString}"`);
+      const searchQuery = glassesToken 
+        ? { glassesToken, $text: { $search: searchString } }
+        : { $text: { $search: searchString } };
+      matchedMemories = await Memory.find(searchQuery).sort({ score: { $meta: "textScore" } }).limit(30);
+    }
+
+    // 3. Combine and Deduplicate Context
+    const combinedMemoriesMap = new Map();
+    recentMemories.forEach(m => combinedMemoriesMap.set(m._id.toString(), m));
+    matchedMemories.forEach(m => combinedMemoriesMap.set(m._id.toString(), m));
+    const combinedMemories = Array.from(combinedMemoriesMap.values());
+    combinedMemories.sort((a, b) => b.timestamp - a.timestamp);
+
     const watchlistQuery = glassesToken ? { isTracking: true, glassesToken } : { isTracking: true };
     const watchlistItems = await WatchlistItem.find(watchlistQuery);
 
-    const cleanContext = recentMemories.map(m => ({
+    const cleanContext = combinedMemories.map(m => ({
       time: new Date(m.timestamp).toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata', weekday: 'short', year: 'numeric', month: 'short',
-        day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true
+        timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true
       }),
       summary: m.summary,
       objects: m.objects,
-      environment: m.environment,
-      action: m.action,
-      unique_identifiers: m.unique_identifiers,
       location: m.latitude ? `GPS: ${m.latitude}, ${m.longitude}` : "Location unknown"
     }));
 
@@ -490,19 +508,36 @@ app.post('/api/voice', (req, res, next) => {
 
     console.log(`📝 Transcription: "${transcription}"`);
 
-    const recentMemories = await Memory.find({ glassesToken }).sort({ timestamp: -1 }).limit(50);
+    // 1. Fetch Top 15 Recent Memories
+    const recentMemories = await Memory.find({ glassesToken }).sort({ timestamp: -1 }).limit(15);
+    
+    // 2. Extract Keywords & Fetch Historical Matches (RAG)
+    const keywords = await extractKeywords(transcription);
+    let matchedMemories = [];
+    if (keywords && keywords.length > 0) {
+      const searchString = keywords.join(" ");
+      console.log(`🔍 Voice RAG Search for: "${searchString}"`);
+      matchedMemories = await Memory.find({ 
+        glassesToken, 
+        $text: { $search: searchString } 
+      }).sort({ score: { $meta: "textScore" } }).limit(25);
+    }
+
+    // 3. Combine and Deduplicate Context
+    const combinedMemoriesMap = new Map();
+    recentMemories.forEach(m => combinedMemoriesMap.set(m._id.toString(), m));
+    matchedMemories.forEach(m => combinedMemoriesMap.set(m._id.toString(), m));
+    const combinedMemories = Array.from(combinedMemoriesMap.values());
+    combinedMemories.sort((a, b) => b.timestamp - a.timestamp);
+
     const watchlistItems = await WatchlistItem.find({ isTracking: true, glassesToken });
 
-    const cleanContext = recentMemories.map(m => ({
+    const cleanContext = combinedMemories.map(m => ({
       time: new Date(m.timestamp).toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata', weekday: 'short', year: 'numeric', month: 'short',
-        day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true
+        timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true
       }),
       summary: m.summary,
       objects: m.objects,
-      environment: m.environment,
-      action: m.action,
-      unique_identifiers: m.unique_identifiers,
       location: m.latitude ? `GPS: ${m.latitude}, ${m.longitude}` : "Location unknown"
     }));
 

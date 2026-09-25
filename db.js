@@ -24,6 +24,8 @@ const memorySchema = new mongoose.Schema({
   glassesToken: { type: String, index: true }
 });
 
+memorySchema.index({ summary: 'text', objects: 'text', action: 'text', environment: 'text' });
+
 const Memory = mongoose.model('Memory', memorySchema);
 
 // -------------------------------------------------------
@@ -97,6 +99,8 @@ const voiceMemorySchema = new mongoose.Schema({
   summary:      { type: String, required: true },
   glassesToken: { type: String, required: true, index: true }
 });
+
+voiceMemorySchema.index({ transcription: 'text', summary: 'text' });
 
 const VoiceMemory = mongoose.model('VoiceMemory', voiceMemorySchema);
 
