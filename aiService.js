@@ -2,7 +2,41 @@ const fs = require('fs');
 require('dotenv').config();
 
 const CLOUD_AI_URL = "https://openrouter.ai/api/v1/chat/completions";
-const API_KEY = process.env.OPENROUTER_API_KEY;
+const PRIMARY_KEY = process.env.OPENROUTER_API_KEY_PRIMARY || process.env.OPENROUTER_API_KEY;
+const SECONDARY_KEY = process.env.OPENROUTER_API_KEY_SECONDARY;
+
+const PRIMARY_MODEL = "google/gemma-4-31b-it";
+const SECONDARY_MODEL = "google/gemma-4-26b-a4b-it";
+
+async function fetchWithFallback(payloadBase) {
+  try {
+    const payload1 = { ...payloadBase, model: PRIMARY_MODEL };
+    const res1 = await fetch(CLOUD_AI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${PRIMARY_KEY}` },
+      body: JSON.stringify(payload1)
+    });
+    const data1 = await res1.json();
+    if (res1.ok && !data1.error) return data1;
+    console.warn("⚠️ Primary API failed, falling back to secondary...");
+    
+    if (SECONDARY_KEY) {
+      const payload2 = { ...payloadBase, model: SECONDARY_MODEL };
+      const res2 = await fetch(CLOUD_AI_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SECONDARY_KEY}` },
+        body: JSON.stringify(payload2)
+      });
+      const data2 = await res2.json();
+      if (res2.ok && !data2.error) return data2;
+      console.error("❌ Secondary API also failed:", data2.error);
+    }
+    return { error: "Both API providers failed" };
+  } catch (err) {
+    console.error("Fetch Exception:", err);
+    return { error: err.message };
+  }
+}
 
 function getBase64Image(path) {
   const image = fs.readFileSync(path);
@@ -40,13 +74,8 @@ async function analyzeScene(imagePaths, watchlistContext = []) {
 
   try {
     console.log(`☁️[V2.0] Analyzing Scene & Extracting Rich Data...`);
-    const response = await fetch(CLOUD_AI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: contentArray }], temperature: 0.1 })
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) return null;
+    const data = await fetchWithFallback({ messages: [{ role: "user", content: contentArray }], temperature: 0.1 });
+    if (data.error) return null;
     let responseText = data.choices[0].message.content.replace(/```json/gi, '').replace(/```/gi, '').trim();
     return JSON.parse(responseText);
   } catch (error) {
@@ -88,7 +117,7 @@ async function analyzeValuable(imagePath) {
 // ==========================================
 // 3. V2.0 CHAT ASSISTANT (Guardrails, Maps & TIME AWARENESS)
 // ==========================================
-async function askAssistant(question, memoryContext, watchlistContext) {
+async function askAssistant(question, memoryContext, watchlistContext, totalMemoriesCount = 0) {
 
   const currentDateTime = new Date().toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -127,6 +156,7 @@ ITEM FOUND WITH LOCATION: If the item IS in the memory log AND has GPS coordinat
    But If the user say to you "nice" or "good" or "great" or "great job" or "good job" or any other appreciation words make sure u say "thank you" to the user accordinng to the context.
    But If the user says "thank you,thanks or any kind of thanking" make sure u reply with "You're welcome! Let me know if you need anything else from your memory log.
    But If user says you good morning you should reply "good morning to you too! how can I help you with your memories today?" and if user says you good afternoon you should reply "good afternoon to you too! how can I help you with your memories?" and if user says you good night you should reply "Good night! Let me know if you need anything else from your memory log."
+9. If the user asks how many memories they have, or how many memories are stored, or what is in their memory in terms of count, you MUST reply EXACTLY: "You have a total of ${totalMemoriesCount} memories!"
 
     Here are the user's WATCHLIST items (Use 'anchors' to avoid confusing their items with other similar objects):
     ${JSON.stringify(watchlistContext)}
@@ -138,13 +168,8 @@ ITEM FOUND WITH LOCATION: If the item IS in the memory log AND has GPS coordinat
   `;
 
   try {
-    const response = await fetch(CLOUD_AI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "system", content: prompt }, { role: "user", content: question }], temperature: 0.1, max_tokens: 200 })
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) return "Sorry, my cloud connection was briefly interrupted.";
+    const data = await fetchWithFallback({ messages: [{ role: "system", content: prompt }, { role: "user", content: question }], temperature: 0.1, max_tokens: 200 });
+    if (data.error) return "Sorry, my cloud connection was briefly interrupted.";
     return data.choices[0].message.content.trim();
   } catch (error) {
     console.error("Chat Error:", error);
@@ -170,13 +195,8 @@ async function compressMemories(rawMemories) {
     `;
   try {
     console.log(`🗜️ [V2.0] Semantically compressing ${rawMemories.length} logs...`);
-    const response = await fetch(CLOUD_AI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: prompt }], temperature: 0.3 })
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) return null;
+    const data = await fetchWithFallback({ messages: [{ role: "user", content: prompt }], temperature: 0.3 });
+    if (data.error) return null;
     return data.choices[0].message.content.trim();
   } catch (error) {
     console.error("Compression Error:", error);
@@ -206,13 +226,8 @@ async function generateDaySummary(rawMemories, voiceMemories, dateString) {
     `;
   try {
     console.log(`📝 [V2.0] Generating Daily Summary for ${rawMemories.length} memories...`);
-    const response = await fetch(CLOUD_AI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: prompt }], temperature: 0.3 })
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) return null;
+    const data = await fetchWithFallback({ messages: [{ role: "user", content: prompt }], temperature: 0.3 });
+    if (data.error) return null;
     return data.choices[0].message.content.trim();
   } catch (error) {
     console.error("Day Summary Error:", error);
@@ -238,13 +253,8 @@ async function summarizeVoiceMemory(transcription) {
     `;
   try {
     console.log(`🎙️ [V2.0] Summarizing voice memory...`);
-    const response = await fetch(CLOUD_AI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: prompt }], temperature: 0.2 })
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) return null;
+    const data = await fetchWithFallback({ messages: [{ role: "user", content: prompt }], temperature: 0.2 });
+    if (data.error) return null;
     return data.choices[0].message.content.trim();
   } catch (error) {
     console.error("Voice Summary Error:", error);
@@ -264,13 +274,8 @@ async function extractKeywords(question) {
     `;
   try {
     console.log(`🔍 Extracting keywords for DB search...`);
-    const response = await fetch(CLOUD_AI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-      body: JSON.stringify({ model: "google/gemma-3-27b-it", messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 50 })
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) return [];
+    const data = await fetchWithFallback({ messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 50 });
+    if (data.error) return [];
     const keywords = data.choices[0].message.content.trim();
     if (keywords === "NONE" || keywords === "") return [];
     return keywords.split(',').map(k => k.trim());

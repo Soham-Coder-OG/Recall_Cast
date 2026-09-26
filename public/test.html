@@ -265,7 +265,7 @@
                 addBubble("🤖 " + data.answer, "ai");
             } catch (e) {
                 chatBox.removeChild(typingBubble);
-                addBubble("❌ Connection failed. Is the server running?", "ai");
+                addBubble("❌ Connection failed.", "ai");
             } finally {
                 document.getElementById('sendBtn').disabled = false;
             }

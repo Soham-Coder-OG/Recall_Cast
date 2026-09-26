@@ -238,8 +238,10 @@ app.post('/api/ask', async (req, res) => {
   try {
     const memoryQuery = glassesToken ? { glassesToken } : {};
     
-    // 1. Fetch Top 20 Recent Memories (for immediate context)
-    const recentMemories = await Memory.find(memoryQuery).sort({ timestamp: -1 }).limit(20);
+    const totalMemoriesCount = await Memory.countDocuments(memoryQuery);
+
+    // 1. Fetch Top 15 Recent Memories (for immediate context)
+    const recentMemories = await Memory.find(memoryQuery).sort({ timestamp: -1 }).limit(15);
     
     // 2. Extract Keywords & Fetch Historical Matches (RAG)
     const keywords = await extractKeywords(question);
@@ -278,7 +280,7 @@ app.post('/api/ask', async (req, res) => {
       unique_anchors: w.unique_anchors
     }));
 
-    const answer = await askAssistant(question, cleanContext, cleanWatchlist);
+    const answer = await askAssistant(question, cleanContext, cleanWatchlist, totalMemoriesCount);
     console.log(`🤖 AI Answers: ${answer}`);
 
     if (glassesToken && sessionId) {
@@ -508,6 +510,8 @@ app.post('/api/voice', (req, res, next) => {
 
     console.log(`📝 Transcription: "${transcription}"`);
 
+    const totalMemoriesCount = await Memory.countDocuments({ glassesToken });
+
     // 1. Fetch Top 15 Recent Memories
     const recentMemories = await Memory.find({ glassesToken }).sort({ timestamp: -1 }).limit(15);
     
@@ -520,7 +524,7 @@ app.post('/api/voice', (req, res, next) => {
       matchedMemories = await Memory.find({ 
         glassesToken, 
         $text: { $search: searchString } 
-      }).sort({ score: { $meta: "textScore" } }).limit(25);
+      }).sort({ score: { $meta: "textScore" } }).limit(30);
     }
 
     // 3. Combine and Deduplicate Context
@@ -547,7 +551,7 @@ app.post('/api/voice', (req, res, next) => {
       unique_anchors: w.unique_anchors
     }));
 
-    const answer = await askAssistant(transcription, cleanContext, cleanWatchlist);
+    const answer = await askAssistant(transcription, cleanContext, cleanWatchlist, totalMemoriesCount);
     console.log(`🤖 Voice answer: ${answer}`);
 
     if (audioFilePath && fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
