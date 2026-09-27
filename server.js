@@ -243,8 +243,21 @@ app.post('/api/ask', async (req, res) => {
     // 1. Fetch Top 15 Recent Memories (for immediate context)
     const recentMemories = await Memory.find(memoryQuery).sort({ timestamp: -1 }).limit(15);
     
+    // 1.5 Fetch Chat Context for Conversation Memory
+    let chatHistory = [];
+    if (glassesToken && sessionId) {
+      const previousChats = await ChatMessage.find({ sessionId, glassesToken })
+        .sort({ _id: -1 })
+        .limit(10);
+      chatHistory = previousChats.reverse().map(msg => ({
+        role: msg.isUser ? "user" : "assistant",
+        content: msg.isUser ? msg.text : msg.text.replace('🤖 ', '')
+      }));
+    }
+
     // 2. Extract Keywords & Fetch Historical Matches (RAG)
-    const keywords = await extractKeywords(question);
+    const contextString = chatHistory.slice(-4).map(c => c.content).join(" ") + " " + question;
+    const keywords = await extractKeywords(contextString);
     let matchedMemories = [];
     if (keywords && keywords.length > 0) {
       const searchString = keywords.join(" ");
@@ -280,7 +293,7 @@ app.post('/api/ask', async (req, res) => {
       unique_anchors: w.unique_anchors
     }));
 
-    const answer = await askAssistant(question, cleanContext, cleanWatchlist, totalMemoriesCount);
+    const answer = await askAssistant(question, cleanContext, cleanWatchlist, totalMemoriesCount, chatHistory);
     console.log(`🤖 AI Answers: ${answer}`);
 
     if (glassesToken && sessionId) {
